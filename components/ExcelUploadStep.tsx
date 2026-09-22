@@ -206,10 +206,10 @@ export const ExcelUploadStep: React.FC<ExcelUploadStepProps> = ({
                 'Enter "x" to mark this employee for deactivation. Leave BLANK to keep the employee active / skip them.'
             ],
             [
-                'Deactivation Date (YYYY-MM-DD)',
+                'Deactivation Date',
                 'Optional',
-                'Date in YYYY-MM-DD format (e.g. 2026-10-31)',
-                'The effective date of deactivation. If left blank, Planday defaults to today\'s date.'
+                'Most formats accepted (e.g. DD/MM/YYYY, YYYY-MM-DD) | Leave Blank for Today',
+                'The effective date of deactivation. Most formats work (e.g. DD/MM/YYYY, DD.MM.YYYY, etc.). However, if you have issues with the dates, or just want to ensure the dates are bulletproof (no misunderstanding between date and month), then you can input YYYY-MM-DD. If left blank, Planday defaults to today\'s date for immediate deactivation.'
             ],
             [
                 'Reason',
@@ -293,7 +293,7 @@ export const ExcelUploadStep: React.FC<ExcelUploadStepProps> = ({
             'First Name',
             'Last Name',
             'Check to Deactivate (x)',
-            'Deactivation Date (YYYY-MM-DD)',
+            'Deactivation Date',
             'Reason',
             'Termination Type',
             'Keep Shifts (TRUE/FALSE*)'
@@ -355,7 +355,7 @@ export const ExcelUploadStep: React.FC<ExcelUploadStepProps> = ({
             'First Name',
             'Last Name',
             'Check to Deactivate (x)',
-            'Deactivation Date (YYYY-MM-DD)',
+            'Deactivation Date',
             'Reason',
             'Termination Type',
             'Keep Shifts (TRUE/FALSE*)'
