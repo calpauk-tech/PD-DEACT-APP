@@ -1,0 +1,6 @@
+{
+  "name": "Stage: Planday Bulk Deactivator",
+  "description": "A tool to bulk deactivate employees via the Planday Open API.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
