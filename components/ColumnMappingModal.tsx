@@ -285,7 +285,7 @@ export const ColumnMappingModal: React.FC<ColumnMappingModalProps> = ({
                             {/* Reason */}
                             <div className="p-3 bg-white border border-gray-200 rounded-xl space-y-1.5">
                                 <label className="font-semibold text-gray-800 text-xs block">
-                                    Reason (Optional)
+                                    Reason details/comment (Optional)
                                 </label>
                                 <select
                                     value={config.colReason}
@@ -396,7 +396,7 @@ export const ColumnMappingModal: React.FC<ColumnMappingModalProps> = ({
                                             <th className="p-2">Identifier ({config.identifierType === 'id' ? 'API ID' : 'Payroll ID'})</th>
                                             <th className="p-2">Deactivate?</th>
                                             <th className="p-2">Date</th>
-                                            <th className="p-2">Reason</th>
+                                            <th className="p-2">Reason details/comment</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-100">

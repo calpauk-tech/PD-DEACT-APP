@@ -45,6 +45,22 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
     const [showOnlyChecked, setShowOnlyChecked] = useState<boolean>(true);
     const [showOnlyErrors, setShowOnlyErrors] = useState<boolean>(false);
 
+    // File scope & selection state
+    const fileItems = useMemo(() => items.filter(i => i.inUploadedFile), [items]);
+    const hasFileItems = fileItems.length > 0;
+    const fileCheckedCount = useMemo(() => fileItems.filter(i => i.selected).length, [fileItems]);
+    const fileUncheckedCount = fileItems.length - fileCheckedCount;
+
+    // Scope state: 'file' (only rows present in uploaded file) vs 'all' (entire portal directory)
+    // Defaults to 'file' whenever file items exist or method === 'excel'
+    const [scope, setScope] = useState<'file' | 'all'>(() => (hasFileItems || method === 'excel') ? 'file' : 'all');
+
+    // File selection view mode: 'all' (all rows from file), 'checked' (only checked rows), 'unchecked' (only unchecked rows)
+    const [fileSelectionFilter, setFileSelectionFilter] = useState<'all' | 'checked' | 'unchecked'>('all');
+
+    // Retained rows: tracks employee IDs that were unchecked so they don't disappear into thin air
+    const [retainedUncheckedIds, setRetainedUncheckedIds] = useState<Set<number>>(new Set());
+
     // Interactive column sorting state
     const [sortField, setSortField] = useState<SortField>('none');
     const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
@@ -97,6 +113,8 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
         return items.filter(i => i.status === 'error').length;
     }, [items]);
 
+    const isFileScopeActive = scope === 'file' && hasFileItems;
+
     // Filter items using the robust All ([]) vs None ([-1]) vs Subset ID filter model + Interactive Sorting
     const filteredItems = useMemo(() => {
         const filtered = filterDeactivationItems(items, {
@@ -105,11 +123,14 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
             filterPrimaryDepartment,
             filterGroup,
             filterType,
-            showOnlyChecked,
-            showOnlyErrors
+            showOnlyChecked: isFileScopeActive ? (fileSelectionFilter === 'checked' || showOnlyChecked) : showOnlyChecked,
+            showOnlyErrors,
+            fileScopeOnly: isFileScopeActive,
+            fileSelectionFilter: isFileScopeActive ? fileSelectionFilter : 'all',
+            retainedEmployeeIds: retainedUncheckedIds
         });
         return sortDeactivationItems(filtered, sortField, sortDirection, terminationTypes, todayStr);
-    }, [items, searchQuery, filterDepartment, filterPrimaryDepartment, filterGroup, filterType, showOnlyChecked, showOnlyErrors, sortField, sortDirection, terminationTypes, todayStr]);
+    }, [items, searchQuery, filterDepartment, filterPrimaryDepartment, filterGroup, filterType, isFileScopeActive, fileSelectionFilter, showOnlyChecked, showOnlyErrors, retainedUncheckedIds, sortField, sortDirection, terminationTypes, todayStr]);
 
     const visibleSelectedCount = useMemo(() => {
         return filteredItems.filter(i => i.selected).length;
@@ -121,9 +142,10 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
         filterPrimaryDepartment ||
         filterGroup.length > 0 ||
         filterType.length > 0 ||
-        !showOnlyChecked || // since default is true in Review
+        (hasFileItems ? (showOnlyChecked || fileSelectionFilter !== 'all') : !showOnlyChecked) ||
         showOnlyErrors ||
-        sortField !== 'none'
+        sortField !== 'none' ||
+        (hasFileItems && scope !== 'file')
     );
 
     const handleResetFilters = () => {
@@ -132,10 +154,12 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
         setFilterPrimaryDepartment(false);
         setFilterGroup([]);
         setFilterType([]);
-        setShowOnlyChecked(true);
+        setShowOnlyChecked(hasFileItems ? false : true);
+        setFileSelectionFilter('all');
         setShowOnlyErrors(false);
         setSortField('none');
         setSortDirection('asc');
+        setRetainedUncheckedIds(new Set());
     };
 
     const handleToggleSort = (field: SortField) => {
@@ -145,8 +169,19 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
     };
 
     // Bulk selection and modification handlers
+    const handleRecheckAllFileEmployees = () => {
+        const fileIds = fileItems.map(i => i.employeeId);
+        onBulkUpdate(fileIds, { selected: true });
+        setRetainedUncheckedIds(new Set());
+    };
+
     const handleSelectAllVisible = (checked: boolean) => {
         const ids = filteredItems.map(i => i.employeeId);
+        if (!checked) {
+            setRetainedUncheckedIds(new Set(ids));
+        } else {
+            setRetainedUncheckedIds(new Set());
+        }
         onBulkUpdate(ids, { selected: checked });
     };
 
@@ -203,6 +238,17 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
     };
 
     const handleRowSelect = (employeeId: number, selected: boolean) => {
+        if (selected) {
+            setRetainedUncheckedIds(prev => {
+                const next = new Set(prev);
+                next.delete(employeeId);
+                return next;
+            });
+        } else {
+            // Keep the row visible with an unchecked box and Excluded badge instead of vanishing!
+            setRetainedUncheckedIds(prev => new Set(prev).add(employeeId));
+        }
+
         if (onToggleSelect) {
             onToggleSelect(employeeId, selected);
         } else {
@@ -342,6 +388,43 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                 </div>
             )}
 
+            {/* File Unchecked Advisory Banner */}
+            {hasFileItems && fileUncheckedCount > 0 && (
+                <div className="bg-amber-50/90 border border-amber-300 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs sm:text-sm text-amber-900 shadow-2xs">
+                    <div className="flex items-start gap-2.5">
+                        <span className="text-amber-600 text-lg shrink-0">💡</span>
+                        <div>
+                            <span className="font-semibold block text-amber-950">
+                                {fileUncheckedCount} employee{fileUncheckedCount === 1 ? '' : 's'} from your uploaded file {fileUncheckedCount === 1 ? 'is' : 'are'} currently unselected
+                            </span>
+                            <span className="text-amber-800 text-xs">
+                                Unchecked employees will remain active in Planday and will not be deactivated.
+                            </span>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setScope('file');
+                                setFileSelectionFilter('all');
+                                setShowOnlyChecked(false);
+                            }}
+                            className="bg-white border border-amber-300 text-amber-900 hover:bg-amber-100 px-3 py-1.5 rounded-xl font-medium text-xs cursor-pointer shadow-2xs transition-colors"
+                        >
+                            View all from file ({fileItems.length})
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleRecheckAllFileEmployees}
+                            className="bg-amber-600 hover:bg-amber-700 text-white font-semibold px-3 py-1.5 rounded-xl text-xs cursor-pointer shadow-2xs transition-colors"
+                        >
+                            Re-check all ({fileItems.length})
+                        </button>
+                    </div>
+                </div>
+            )}
+
             {/* Table Editor Toolbar: Search, Filters & Bulk Actions */}
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200">
                 <div className="flex flex-col lg:flex-row gap-4 items-stretch lg:items-center justify-between">
@@ -404,21 +487,131 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                             />
                         )}
 
-                        {/* Show only checked toggle */}
-                        <label className={`flex items-center gap-2 cursor-pointer select-none text-xs sm:text-sm px-3 py-2 border rounded-xl transition-colors ${
-                            showOnlyChecked ? 'bg-blue-50 text-blue-900 border-blue-300 font-medium' : 'bg-gray-50 text-gray-600 border-gray-300 hover:bg-gray-100'
-                        }`}>
-                            <input
-                                type="checkbox"
-                                checked={showOnlyChecked}
-                                onChange={e => {
-                                    setShowOnlyChecked(e.target.checked);
-                                    if (e.target.checked) setShowOnlyErrors(false);
-                                }}
-                                className="w-4 h-4 text-blue-600 rounded"
-                            />
-                            <span>Only Checked ({selectedCount})</span>
-                        </label>
+                        {/* Scope selector when employees from an uploaded file exist */}
+                        {hasFileItems && (
+                            <div className="flex items-center gap-1 p-1 bg-gray-100 rounded-xl border border-gray-200 text-xs shadow-2xs">
+                                <span className="text-[11px] font-bold text-gray-500 uppercase px-1.5 tracking-wider">
+                                    Source:
+                                </span>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setScope('file');
+                                        setRetainedUncheckedIds(new Set());
+                                    }}
+                                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg font-medium cursor-pointer transition-all ${
+                                        scope === 'file'
+                                            ? 'bg-white text-blue-700 shadow-2xs border border-gray-200 font-semibold'
+                                            : 'text-gray-600 hover:text-gray-900'
+                                    }`}
+                                    title="Only show employees present in your uploaded Excel file (prevents loading all portal employees)"
+                                >
+                                    <span>📄</span>
+                                    <span>File Rows ({fileItems.length})</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setScope('all');
+                                        setRetainedUncheckedIds(new Set());
+                                    }}
+                                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg font-medium cursor-pointer transition-all ${
+                                        scope === 'all'
+                                            ? 'bg-white text-blue-700 shadow-2xs border border-gray-200 font-semibold'
+                                            : 'text-gray-600 hover:text-gray-900'
+                                    }`}
+                                    title={`View entire portal directory (${items.length} employees)`}
+                                >
+                                    <span>🌐</span>
+                                    <span>All Portal ({items.length})</span>
+                                </button>
+                            </div>
+                        )}
+
+                        {/* File view filter or standard Only Checked filter */}
+                        {scope === 'file' && hasFileItems ? (
+                            <div className="flex items-center gap-1 p-1 bg-gray-100 rounded-xl border border-gray-200 text-xs shadow-2xs">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setFileSelectionFilter('all');
+                                        setShowOnlyChecked(false);
+                                        setShowOnlyErrors(false);
+                                    }}
+                                    className={`px-2.5 py-1.5 rounded-lg font-medium cursor-pointer transition-all ${
+                                        fileSelectionFilter === 'all' && !showOnlyChecked && !showOnlyErrors
+                                            ? 'bg-white text-blue-700 shadow-2xs border border-gray-200 font-semibold'
+                                            : 'text-gray-600 hover:text-gray-900'
+                                    }`}
+                                    title="View all employees from your file (both checked and unchecked rows)"
+                                >
+                                    All from File ({fileItems.length})
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setFileSelectionFilter('checked');
+                                        setShowOnlyChecked(true);
+                                        setShowOnlyErrors(false);
+                                    }}
+                                    className={`px-2.5 py-1.5 rounded-lg font-medium cursor-pointer transition-all ${
+                                        (fileSelectionFilter === 'checked' || showOnlyChecked) && !showOnlyErrors
+                                            ? 'bg-white text-blue-700 shadow-2xs border border-gray-200 font-semibold'
+                                            : 'text-gray-600 hover:text-gray-900'
+                                    }`}
+                                    title="View only employees checked for deactivation"
+                                >
+                                    Only Checked ({fileCheckedCount})
+                                </button>
+                                {fileUncheckedCount > 0 && (
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setFileSelectionFilter('unchecked');
+                                            setShowOnlyChecked(false);
+                                            setShowOnlyErrors(false);
+                                        }}
+                                        className={`px-2.5 py-1.5 rounded-lg font-medium cursor-pointer transition-all ${
+                                            fileSelectionFilter === 'unchecked'
+                                                ? 'bg-amber-100 text-amber-900 border border-amber-300 font-semibold shadow-2xs'
+                                                : 'text-amber-800 hover:bg-amber-50'
+                                        }`}
+                                        title="View only the employees from your file that are currently unchecked"
+                                    >
+                                        Unchecked ({fileUncheckedCount})
+                                    </button>
+                                )}
+                            </div>
+                        ) : (
+                            /* Show only checked toggle for portal view */
+                            <label className={`flex items-center gap-2 cursor-pointer select-none text-xs sm:text-sm px-3 py-2 border rounded-xl transition-colors ${
+                                showOnlyChecked ? 'bg-blue-50 text-blue-900 border-blue-300 font-medium' : 'bg-gray-50 text-gray-600 border-gray-300 hover:bg-gray-100'
+                            }`}>
+                                <input
+                                    type="checkbox"
+                                    checked={showOnlyChecked}
+                                    onChange={e => {
+                                        setShowOnlyChecked(e.target.checked);
+                                        if (e.target.checked) setShowOnlyErrors(false);
+                                    }}
+                                    className="w-4 h-4 text-blue-600 rounded"
+                                />
+                                <span>Only Checked ({selectedCount})</span>
+                            </label>
+                        )}
+
+                        {/* Quick button to restore/re-check all from file if any are unchecked */}
+                        {hasFileItems && fileUncheckedCount > 0 && (
+                            <button
+                                type="button"
+                                onClick={handleRecheckAllFileEmployees}
+                                className="flex items-center gap-1.5 text-xs bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100 font-semibold px-2.5 py-1.5 rounded-xl cursor-pointer transition-colors shadow-2xs"
+                                title="Re-check all employees from the uploaded file back into the deactivation queue"
+                            >
+                                <span>↩️</span>
+                                <span>Re-check All File ({fileItems.length})</span>
+                            </button>
+                        )}
 
                         {/* Show only errors toggle if errors exist */}
                         {failedItemsCount > 0 && (
@@ -464,6 +657,8 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                                 <option value="id-desc">Employee ID (High to Low)</option>
                                 <option value="date-asc">Deactivation Date (Earliest First)</option>
                                 <option value="date-desc">Deactivation Date (Latest First)</option>
+                                <option value="reason-asc">Reason details/comment (A → Z)</option>
+                                <option value="reason-desc">Reason details/comment (Z → A)</option>
                                 <option value="terminationType-asc">Termination Type (A → Z)</option>
                                 <option value="terminationType-desc">Termination Type (Z → A)</option>
                                 <option value="selected-asc">Checked / Selected First</option>
@@ -595,10 +790,10 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                             <div className="flex items-center gap-1">
                                 <input
                                     type="text"
-                                    placeholder="Bulk reason..."
+                                    placeholder="Bulk reason details/comment..."
                                     value={bulkReason}
                                     onChange={e => setBulkReason(e.target.value)}
-                                    className="bg-white border border-gray-300 px-2 py-0.5 rounded-lg text-xs w-28"
+                                    className="bg-white border border-gray-300 px-2 py-0.5 rounded-lg text-xs w-36"
                                 />
                                 <button
                                     type="button"
@@ -723,11 +918,11 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                                 </th>
                                 <th 
                                     onClick={() => handleToggleSort('reason')}
-                                    className="p-3 min-w-[170px] cursor-pointer select-none hover:bg-gray-200/80 transition-colors group"
-                                    title="Click to sort by Reason"
+                                    className="p-3 min-w-[210px] cursor-pointer select-none hover:bg-gray-200/80 transition-colors group"
+                                    title="Click to sort by Reason details/comment"
                                 >
                                     <div className="flex items-center gap-1">
-                                        <span>Reason</span>
+                                        <span>Reason details/comment</span>
                                         <SortIndicator field="reason" currentField={sortField} direction={sortDirection} />
                                     </div>
                                     <span className="block text-[11px] font-normal text-gray-500">
@@ -790,12 +985,52 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                         <tbody className="divide-y divide-gray-100">
                             {filteredItems.length === 0 ? (
                                 <tr>
-                                    <td colSpan={7} className="p-12 text-center text-gray-400 italic">
-                                        {items.length === 0 
-                                            ? "No employees loaded." 
-                                            : showOnlyChecked 
-                                                ? "No employees are currently checked. Uncheck 'Only Checked' to view all portal employees."
-                                                : "No employees match your search/filter criteria."}
+                                    <td colSpan={7} className="p-12 text-center text-gray-500">
+                                        {showOnlyErrors ? (
+                                            "No errors found matching the current filters."
+                                        ) : isFileScopeActive ? (
+                                            <div className="space-y-3">
+                                                <p className="font-medium text-gray-700 text-sm">
+                                                    {fileSelectionFilter === 'unchecked'
+                                                        ? "All employees in your file are currently checked for deactivation."
+                                                        : "No employees in your uploaded file match the current filter criteria."}
+                                                </p>
+                                                <div className="flex items-center justify-center gap-2">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setFileSelectionFilter('all');
+                                                            setShowOnlyChecked(false);
+                                                        }}
+                                                        className="bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 px-3 py-1.5 rounded-xl text-xs font-semibold shadow-2xs cursor-pointer"
+                                                    >
+                                                        Show All File Rows ({fileItems.length})
+                                                    </button>
+                                                    {fileUncheckedCount > 0 && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={handleRecheckAllFileEmployees}
+                                                            className="bg-blue-600 text-white hover:bg-blue-700 px-3 py-1.5 rounded-xl text-xs font-semibold shadow-2xs cursor-pointer"
+                                                        >
+                                                            Re-check All from File ({fileItems.length})
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        ) : showOnlyChecked ? (
+                                            <div className="space-y-2">
+                                                <p className="font-medium text-gray-700 text-sm">No employees are currently checked.</p>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setShowOnlyChecked(false)}
+                                                    className="text-xs text-blue-600 hover:text-blue-800 underline font-semibold cursor-pointer"
+                                                >
+                                                    Uncheck filter to view employees
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            "No employees match your search/filter criteria."
+                                        )}
                                     </td>
                                 </tr>
                             ) : (
@@ -806,7 +1041,9 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                                         <tr
                                             key={item.employeeId}
                                             className={`transition-colors hover:bg-blue-50/30 ${
-                                                item.selected ? (isMissingTerminationType ? 'bg-amber-50/30 font-medium' : 'bg-blue-50/50 font-medium') : ''
+                                                item.selected 
+                                                    ? (isMissingTerminationType ? 'bg-amber-50/30 font-medium' : 'bg-blue-50/50 font-medium') 
+                                                    : 'opacity-70 bg-gray-50/70 hover:opacity-100'
                                             }`}
                                         >
                                             {/* Checkbox */}
@@ -832,8 +1069,31 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                                             {/* Name & Status badges */}
                                             <td className="p-3 text-gray-900 font-semibold">
                                                 <div className="flex items-center gap-2 flex-wrap">
-                                                    <span>{item.firstName} {item.lastName}</span>
-                                                    {isMissingTerminationType && (
+                                                    <span className={!item.selected ? 'text-gray-500' : ''}>
+                                                        {item.firstName} {item.lastName}
+                                                    </span>
+                                                    {!item.selected && (
+                                                        <span 
+                                                            className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-900 bg-amber-100/80 border border-amber-300 px-1.5 py-0.5 rounded-md shadow-2xs"
+                                                            title="This employee is unselected and will not be deactivated"
+                                                        >
+                                                            <span>⏸️</span>
+                                                            <span>Unchecked (excluded)</span>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleRowSelect(item.employeeId, true)}
+                                                                className="ml-1 text-blue-600 hover:text-blue-800 font-bold underline text-[10px] cursor-pointer"
+                                                            >
+                                                                Re-check
+                                                            </button>
+                                                        </span>
+                                                    )}
+                                                    {item.inUploadedFile && scope === 'all' && (
+                                                        <span className="text-[10px] bg-slate-100 text-slate-700 border border-slate-300 px-1.5 py-0.5 rounded font-sans" title="From uploaded Excel file">
+                                                            📄 From file
+                                                        </span>
+                                                    )}
+                                                    {item.selected && isMissingTerminationType && (
                                                         <span 
                                                             className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-800 bg-amber-50 border border-amber-300 px-1.5 py-0.5 rounded-md shadow-2xs"
                                                             title="Termination type is unassigned. Depending on portal settings, a termination type might be required to deactivate this employee."
@@ -1038,37 +1298,6 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                             <p>
                                 • <strong>{unassignShiftsCount}</strong> will be unassigned from future shifts ({keepShiftsCount} will keep shifts).
                             </p>
-                            {missingTermTypeCount > 0 && terminationTypes.length > 0 && (
-                                <div className="mt-2 bg-amber-100 border border-amber-300 text-amber-950 p-2.5 rounded-lg space-y-1">
-                                    <p className="font-bold flex items-center gap-1.5 text-xs text-amber-950">
-                                        <span>📋 Portal Setting Notice: {missingTermTypeCount} employee(s) have no Termination Type</span>
-                                    </p>
-                                    <p className="text-[11px] text-amber-900 leading-relaxed">
-                                        Termination types were found in your portal ({terminationTypes.map(t => t.name).join(', ')}). In Planday, setting a termination type might or might not be required depending on your portal settings. If your portal requires it, Planday API will reject deactivating employees without one.
-                                    </p>
-                                    <p className="text-[11px] text-amber-950 font-medium">
-                                        Please check your termination types and required status inside the portal.
-                                    </p>
-                                    <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                                        <select
-                                            value={quickAssignTypeId}
-                                            onChange={e => setQuickAssignTypeId(Number(e.target.value))}
-                                            className="bg-white border border-amber-300 text-amber-950 px-2 py-1 rounded-md text-[11px] font-medium"
-                                        >
-                                            {terminationTypes.map(t => (
-                                                <option key={t.id} value={t.id}>{t.name}</option>
-                                            ))}
-                                        </select>
-                                        <button
-                                            type="button"
-                                            onClick={() => handleQuickAssignTerminationType(quickAssignTypeId)}
-                                            className="bg-amber-600 hover:bg-amber-700 text-white font-semibold text-[11px] px-2.5 py-1 rounded-md transition-colors cursor-pointer"
-                                        >
-                                            Assign to all {missingTermTypeCount} now
-                                        </button>
-                                    </div>
-                                </div>
-                            )}
                             <p className="text-red-700 font-semibold pt-1">
                                 Are you sure you want to proceed? Deactivated employees will lose access according to these rules.
                             </p>

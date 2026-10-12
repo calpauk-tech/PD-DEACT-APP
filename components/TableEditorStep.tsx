@@ -35,6 +35,24 @@ export const TableEditorStep: React.FC<TableEditorStepProps> = ({
     const [filterType, setFilterType] = useState<number[]>([]);
     const [showOnlyChecked, setShowOnlyChecked] = useState(false);
     const [showOnlyErrors, setShowOnlyErrors] = useState(false);
+
+    // File scope & selection state
+    const fileItems = useMemo(() => items.filter(i => i.inUploadedFile), [items]);
+    const hasFileItems = fileItems.length > 0;
+    const fileCheckedCount = useMemo(() => fileItems.filter(i => i.selected).length, [fileItems]);
+    const fileUncheckedCount = fileItems.length - fileCheckedCount;
+
+    // Scope state: 'file' (only rows present in uploaded file) vs 'all' (entire portal directory)
+    const [scope, setScope] = useState<'file' | 'all'>(() => hasFileItems ? 'file' : 'all');
+
+    // File selection view mode: 'all' (all rows from file), 'checked' (only checked rows), 'unchecked' (only unchecked rows)
+    const [fileSelectionFilter, setFileSelectionFilter] = useState<'all' | 'checked' | 'unchecked'>('all');
+
+    // Retained rows: tracks employee IDs that were unchecked so they don't disappear into thin air
+    const [retainedUncheckedIds, setRetainedUncheckedIds] = useState<Set<number>>(new Set());
+
+    const isFileScopeActive = scope === 'file' && hasFileItems;
+
     const [sortField, setSortField] = useState<SortField>('none');
     const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
 
@@ -68,11 +86,14 @@ export const TableEditorStep: React.FC<TableEditorStepProps> = ({
             filterPrimaryDepartment,
             filterGroup,
             filterType,
-            showOnlyChecked,
-            showOnlyErrors
+            showOnlyChecked: isFileScopeActive ? (fileSelectionFilter === 'checked' || showOnlyChecked) : showOnlyChecked,
+            showOnlyErrors,
+            fileScopeOnly: isFileScopeActive,
+            fileSelectionFilter: isFileScopeActive ? fileSelectionFilter : 'all',
+            retainedEmployeeIds: retainedUncheckedIds
         });
         return sortDeactivationItems(filtered, sortField, sortDirection, terminationTypes, todayStr);
-    }, [items, searchQuery, filterDepartment, filterPrimaryDepartment, filterGroup, filterType, showOnlyChecked, showOnlyErrors, sortField, sortDirection, terminationTypes, todayStr]);
+    }, [items, searchQuery, filterDepartment, filterPrimaryDepartment, filterGroup, filterType, isFileScopeActive, fileSelectionFilter, showOnlyChecked, showOnlyErrors, retainedUncheckedIds, sortField, sortDirection, terminationTypes, todayStr]);
 
     const hasActiveFilters = Boolean(
         searchQuery.trim() ||
@@ -80,9 +101,10 @@ export const TableEditorStep: React.FC<TableEditorStepProps> = ({
         filterPrimaryDepartment ||
         filterGroup.length > 0 ||
         filterType.length > 0 ||
-        showOnlyChecked ||
+        (hasFileItems ? (showOnlyChecked || fileSelectionFilter !== 'all') : showOnlyChecked) ||
         showOnlyErrors ||
-        sortField !== 'none'
+        sortField !== 'none' ||
+        (hasFileItems && scope !== 'file')
     );
 
     const handleResetFilters = () => {
@@ -92,15 +114,23 @@ export const TableEditorStep: React.FC<TableEditorStepProps> = ({
         setFilterGroup([]);
         setFilterType([]);
         setShowOnlyChecked(false);
+        setFileSelectionFilter('all');
         setShowOnlyErrors(false);
         setSortField('none');
         setSortDirection('asc');
+        setRetainedUncheckedIds(new Set());
     };
 
     const handleToggleSort = (field: SortField) => {
         const next = getNextSort(sortField, sortDirection, field);
         setSortField(next.field);
         setSortDirection(next.direction);
+    };
+
+    const handleRecheckAllFileEmployees = () => {
+        const fileIds = fileItems.map(i => i.employeeId);
+        onBulkUpdate(fileIds, { selected: true });
+        setRetainedUncheckedIds(new Set());
     };
 
     const selectedCount = useMemo(() => {
@@ -114,6 +144,11 @@ export const TableEditorStep: React.FC<TableEditorStepProps> = ({
     // Bulk handlers
     const handleSelectAllVisible = (checked: boolean) => {
         const ids = filteredItems.map(i => i.employeeId);
+        if (!checked) {
+            setRetainedUncheckedIds(new Set(ids));
+        } else {
+            setRetainedUncheckedIds(new Set());
+        }
         onBulkUpdate(ids, { selected: checked });
     };
 
@@ -298,19 +333,129 @@ export const TableEditorStep: React.FC<TableEditorStepProps> = ({
                             />
                         )}
 
-                        {/* Show only checked toggle */}
-                        <label className="flex items-center gap-2 cursor-pointer select-none text-xs sm:text-sm text-gray-600 px-3 py-2 bg-gray-50 border border-gray-300 rounded-xl hover:bg-gray-100">
-                            <input
-                                type="checkbox"
-                                checked={showOnlyChecked}
-                                onChange={e => {
-                                    setShowOnlyChecked(e.target.checked);
-                                    if (e.target.checked) setShowOnlyErrors(false);
-                                }}
-                                className="w-4 h-4 text-blue-600 rounded"
-                            />
-                            <span>Only Checked ({selectedCount})</span>
-                        </label>
+                        {/* Scope selector when employees from an uploaded file exist */}
+                        {hasFileItems && (
+                            <div className="flex items-center gap-1 p-1 bg-gray-100 rounded-xl border border-gray-200 text-xs shadow-2xs">
+                                <span className="text-[11px] font-bold text-gray-500 uppercase px-1.5 tracking-wider">
+                                    Source:
+                                </span>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setScope('file');
+                                        setRetainedUncheckedIds(new Set());
+                                    }}
+                                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg font-medium cursor-pointer transition-all ${
+                                        scope === 'file'
+                                            ? 'bg-white text-blue-700 shadow-2xs border border-gray-200 font-semibold'
+                                            : 'text-gray-600 hover:text-gray-900'
+                                    }`}
+                                    title="Only show employees present in your uploaded Excel file (prevents loading all portal employees)"
+                                >
+                                    <span>📄</span>
+                                    <span>File Rows ({fileItems.length})</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setScope('all');
+                                        setRetainedUncheckedIds(new Set());
+                                    }}
+                                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg font-medium cursor-pointer transition-all ${
+                                        scope === 'all'
+                                            ? 'bg-white text-blue-700 shadow-2xs border border-gray-200 font-semibold'
+                                            : 'text-gray-600 hover:text-gray-900'
+                                    }`}
+                                    title={`View entire portal directory (${items.length} employees)`}
+                                >
+                                    <span>🌐</span>
+                                    <span>All Portal ({items.length})</span>
+                                </button>
+                            </div>
+                        )}
+
+                        {/* File view filter or standard Only Checked filter */}
+                        {scope === 'file' && hasFileItems ? (
+                            <div className="flex items-center gap-1 p-1 bg-gray-100 rounded-xl border border-gray-200 text-xs shadow-2xs">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setFileSelectionFilter('all');
+                                        setShowOnlyChecked(false);
+                                        setShowOnlyErrors(false);
+                                    }}
+                                    className={`px-2.5 py-1.5 rounded-lg font-medium cursor-pointer transition-all ${
+                                        fileSelectionFilter === 'all' && !showOnlyChecked && !showOnlyErrors
+                                            ? 'bg-white text-blue-700 shadow-2xs border border-gray-200 font-semibold'
+                                            : 'text-gray-600 hover:text-gray-900'
+                                    }`}
+                                    title="View all employees from your file (both checked and unchecked rows)"
+                                >
+                                    All from File ({fileItems.length})
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setFileSelectionFilter('checked');
+                                        setShowOnlyChecked(true);
+                                        setShowOnlyErrors(false);
+                                    }}
+                                    className={`px-2.5 py-1.5 rounded-lg font-medium cursor-pointer transition-all ${
+                                        (fileSelectionFilter === 'checked' || showOnlyChecked) && !showOnlyErrors
+                                            ? 'bg-white text-blue-700 shadow-2xs border border-gray-200 font-semibold'
+                                            : 'text-gray-600 hover:text-gray-900'
+                                    }`}
+                                    title="View only employees checked for deactivation"
+                                >
+                                    Only Checked ({fileCheckedCount})
+                                </button>
+                                {fileUncheckedCount > 0 && (
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setFileSelectionFilter('unchecked');
+                                            setShowOnlyChecked(false);
+                                            setShowOnlyErrors(false);
+                                        }}
+                                        className={`px-2.5 py-1.5 rounded-lg font-medium cursor-pointer transition-all ${
+                                            fileSelectionFilter === 'unchecked'
+                                                ? 'bg-amber-100 text-amber-900 border border-amber-300 font-semibold shadow-2xs'
+                                                : 'text-amber-800 hover:bg-amber-50'
+                                        }`}
+                                        title="View only the employees from your file that are currently unchecked"
+                                    >
+                                        Unchecked ({fileUncheckedCount})
+                                    </button>
+                                )}
+                            </div>
+                        ) : (
+                            /* Show only checked toggle */
+                            <label className="flex items-center gap-2 cursor-pointer select-none text-xs sm:text-sm text-gray-600 px-3 py-2 bg-gray-50 border border-gray-300 rounded-xl hover:bg-gray-100">
+                                <input
+                                    type="checkbox"
+                                    checked={showOnlyChecked}
+                                    onChange={e => {
+                                        setShowOnlyChecked(e.target.checked);
+                                        if (e.target.checked) setShowOnlyErrors(false);
+                                    }}
+                                    className="w-4 h-4 text-blue-600 rounded"
+                                />
+                                <span>Only Checked ({selectedCount})</span>
+                            </label>
+                        )}
+
+                        {/* Quick button to restore/re-check all from file if any are unchecked */}
+                        {hasFileItems && fileUncheckedCount > 0 && (
+                            <button
+                                type="button"
+                                onClick={handleRecheckAllFileEmployees}
+                                className="flex items-center gap-1.5 text-xs bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100 font-semibold px-2.5 py-1.5 rounded-xl cursor-pointer transition-colors shadow-2xs"
+                                title="Re-check all employees from the uploaded file back into the deactivation queue"
+                            >
+                                <span>↩️</span>
+                                <span>Re-check All File ({fileItems.length})</span>
+                            </button>
+                        )}
 
                         {/* Show only errors toggle if errors exist */}
                         {failedItemsCount > 0 && (
@@ -356,6 +501,8 @@ export const TableEditorStep: React.FC<TableEditorStepProps> = ({
                                 <option value="id-desc">Employee ID (High to Low)</option>
                                 <option value="date-asc">Deactivation Date (Earliest First)</option>
                                 <option value="date-desc">Deactivation Date (Latest First)</option>
+                                <option value="reason-asc">Reason details/comment (A → Z)</option>
+                                <option value="reason-desc">Reason details/comment (Z → A)</option>
                                 <option value="terminationType-asc">Termination Type (A → Z)</option>
                                 <option value="terminationType-desc">Termination Type (Z → A)</option>
                                 <option value="selected-asc">Checked / Selected First</option>
@@ -487,10 +634,10 @@ export const TableEditorStep: React.FC<TableEditorStepProps> = ({
                             <div className="flex items-center gap-1">
                                 <input
                                     type="text"
-                                    placeholder="Bulk reason..."
+                                    placeholder="Bulk reason details/comment..."
                                     value={bulkReason}
                                     onChange={e => setBulkReason(e.target.value)}
-                                    className="bg-white border border-gray-300 px-2 py-0.5 rounded-lg text-xs w-28"
+                                    className="bg-white border border-gray-300 px-2 py-0.5 rounded-lg text-xs w-36"
                                 />
                                 <button
                                     type="button"
@@ -615,11 +762,11 @@ export const TableEditorStep: React.FC<TableEditorStepProps> = ({
                                 </th>
                                 <th 
                                     onClick={() => handleToggleSort('reason')}
-                                    className="p-3 min-w-[180px] cursor-pointer select-none hover:bg-gray-200/80 transition-colors group"
-                                    title="Click to sort by Reason"
+                                    className="p-3 min-w-[210px] cursor-pointer select-none hover:bg-gray-200/80 transition-colors group"
+                                    title="Click to sort by Reason details/comment"
                                 >
                                     <div className="flex items-center gap-1">
-                                        <span>Reason</span>
+                                        <span>Reason details/comment</span>
                                         <SortIndicator field="reason" currentField={sortField} direction={sortDirection} />
                                     </div>
                                     <span className="block text-[11px] font-normal text-gray-500">
@@ -703,7 +850,18 @@ export const TableEditorStep: React.FC<TableEditorStepProps> = ({
                                                 <input
                                                     type="checkbox"
                                                     checked={item.selected}
-                                                    onChange={e => onUpdateItem(item.employeeId, { selected: e.target.checked })}
+                                                    onChange={e => {
+                                                        if (e.target.checked) {
+                                                            setRetainedUncheckedIds(prev => {
+                                                                const next = new Set(prev);
+                                                                next.delete(item.employeeId);
+                                                                return next;
+                                                            });
+                                                        } else {
+                                                            setRetainedUncheckedIds(prev => new Set(prev).add(item.employeeId));
+                                                        }
+                                                        onUpdateItem(item.employeeId, { selected: e.target.checked });
+                                                    }}
                                                     className="w-4 h-4 text-blue-600 rounded cursor-pointer"
                                                 />
                                             </td>
@@ -721,7 +879,37 @@ export const TableEditorStep: React.FC<TableEditorStepProps> = ({
                                             {/* Name & Error badge if applicable */}
                                             <td className="p-3 text-gray-900 font-semibold">
                                                 <div className="flex items-center gap-1.5 flex-wrap">
-                                                    <span>{item.firstName} {item.lastName}</span>
+                                                    <span className={!item.selected ? 'text-gray-500' : ''}>
+                                                        {item.firstName} {item.lastName}
+                                                    </span>
+                                                    {!item.selected && (
+                                                        <span 
+                                                            className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-900 bg-amber-100/80 border border-amber-300 px-1.5 py-0.5 rounded-md shadow-2xs"
+                                                            title="This employee is unselected and will not be deactivated"
+                                                        >
+                                                            <span>⏸️</span>
+                                                            <span>Unchecked (excluded)</span>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    setRetainedUncheckedIds(prev => {
+                                                                        const next = new Set(prev);
+                                                                        next.delete(item.employeeId);
+                                                                        return next;
+                                                                    });
+                                                                    onUpdateItem(item.employeeId, { selected: true });
+                                                                }}
+                                                                className="ml-1 text-blue-600 hover:text-blue-800 font-bold underline text-[10px] cursor-pointer"
+                                                            >
+                                                                Re-check
+                                                            </button>
+                                                        </span>
+                                                    )}
+                                                    {item.inUploadedFile && scope === 'all' && (
+                                                        <span className="text-[10px] bg-slate-100 text-slate-700 border border-slate-300 px-1.5 py-0.5 rounded font-sans" title="From uploaded Excel file">
+                                                            📄 In File
+                                                        </span>
+                                                    )}
                                                     {isMissingTerminationType && (
                                                         <span 
                                                             className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-800 bg-amber-50 border border-amber-300 px-1.5 py-0.5 rounded-md shadow-2xs"

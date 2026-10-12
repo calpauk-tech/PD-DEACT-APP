@@ -53,6 +53,7 @@ export interface DeactivationItem {
   terminationTypeName?: string | null;
   status?: 'pending' | 'processing' | 'success' | 'error' | 'aborted';
   resultMessage?: string;
+  inUploadedFile?: boolean; // Flag if this employee was present in the uploaded file
 }
 
 export interface DeactivationPayload {

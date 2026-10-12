@@ -37,7 +37,7 @@ export const ResultsStep: React.FC<ResultsStepProps> = ({
             'Deactivation Date',
             'Termination Type',
             'Keep Shifts',
-            'Reason',
+            'Reason details/comment',
             'Result Message'
         ];
 
@@ -89,7 +89,7 @@ export const ResultsStep: React.FC<ResultsStepProps> = ({
             { wch: 20 }, // Date
             { wch: 22 }, // Termination Type
             { wch: 14 }, // Keep Shifts
-            { wch: 24 }, // Reason
+            { wch: 28 }, // Reason details/comment
             { wch: 45 }  // Message
         ];
 
@@ -250,7 +250,7 @@ export const ResultsStep: React.FC<ResultsStepProps> = ({
                                 <th className="p-3">Effective Date</th>
                                 <th className="p-3">Termination Type</th>
                                 <th className="p-3">Keep Shifts</th>
-                                <th className="p-3">Reason</th>
+                                <th className="p-3">Reason details/comment</th>
                                 <th className="p-3">API Response</th>
                             </tr>
                         </thead>

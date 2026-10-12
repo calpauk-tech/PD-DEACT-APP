@@ -212,7 +212,7 @@ export const ExcelUploadStep: React.FC<ExcelUploadStepProps> = ({
                 'The effective date of deactivation. Most formats work (e.g. DD/MM/YYYY, DD.MM.YYYY, etc.). However, if you have issues with the dates, or just want to ensure the dates are bulletproof (no misunderstanding between date and month), then you can input YYYY-MM-DD. If left blank, Planday defaults to today\'s date for immediate deactivation.'
             ],
             [
-                'Reason',
+                'Reason details/comment',
                 'Optional',
                 'Free text (e.g. Resignation, Relocation)',
                 'Free-text note or termination reason recorded in Planday\'s employee deactivation history.'
@@ -294,7 +294,7 @@ export const ExcelUploadStep: React.FC<ExcelUploadStepProps> = ({
             'Last Name',
             'Check to Deactivate (x)',
             'Deactivation Date',
-            'Reason',
+            'Reason details/comment',
             'Termination Type',
             'Keep Shifts (TRUE/FALSE*)'
         ];
@@ -322,7 +322,7 @@ export const ExcelUploadStep: React.FC<ExcelUploadStepProps> = ({
             { wch: 18 }, // Last Name
             { wch: 25 }, // Check to Deactivate (x)
             { wch: 30 }, // Deactivation Date
-            { wch: 28 }, // Reason
+            { wch: 30 }, // Reason details/comment
             { wch: 26 }, // Termination Type
             { wch: 25 }, // Keep Shifts
         ];
@@ -356,7 +356,7 @@ export const ExcelUploadStep: React.FC<ExcelUploadStepProps> = ({
             'Last Name',
             'Check to Deactivate (x)',
             'Deactivation Date',
-            'Reason',
+            'Reason details/comment',
             'Termination Type',
             'Keep Shifts (TRUE/FALSE*)'
         ];
@@ -402,7 +402,7 @@ export const ExcelUploadStep: React.FC<ExcelUploadStepProps> = ({
             { wch: 18 }, // Last Name
             { wch: 25 }, // Check to Deactivate (x)
             { wch: 30 }, // Deactivation Date
-            { wch: 28 }, // Reason
+            { wch: 30 }, // Reason details/comment
             { wch: 26 }, // Termination Type
             { wch: 25 }, // Keep Shifts
         ];
@@ -465,7 +465,10 @@ export const ExcelUploadStep: React.FC<ExcelUploadStepProps> = ({
                 }
             }
 
-            const updatedList: DeactivationItem[] = [...items];
+            const updatedList: DeactivationItem[] = items.map(item => ({
+                ...item,
+                inUploadedFile: false
+            }));
             let checkedCount = 0;
             let matchedCount = 0;
             let unmatchedCount = 0;
@@ -594,6 +597,7 @@ export const ExcelUploadStep: React.FC<ExcelUploadStepProps> = ({
                     keepShifts: isKeep,
                     terminationTypeId: parsedTermId,
                     terminationTypeName: parsedTermName,
+                    inUploadedFile: true,
                 };
             }
 

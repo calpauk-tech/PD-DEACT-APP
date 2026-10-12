@@ -95,7 +95,7 @@ export const ProcessGuideModal: React.FC<ProcessGuideModalProps> = ({ isOpen, on
 
                     <div>
                         <h4 className="font-bold text-gray-900 text-base mb-3 flex items-center gap-2">
-                            <span>3.</span> Optional Deactivation Reason
+                            <span>3.</span> Optional Deactivation Reason details/comment
                         </h4>
                         <div className="pl-6">
                             <p className="text-xs text-gray-600">

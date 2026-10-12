@@ -8,6 +8,9 @@ export interface FilterOptionsState {
     filterType?: number[];
     showOnlyChecked?: boolean;
     showOnlyErrors?: boolean;
+    fileScopeOnly?: boolean;
+    fileSelectionFilter?: 'all' | 'checked' | 'unchecked';
+    retainedEmployeeIds?: Set<number>;
 }
 
 /**
@@ -26,11 +29,23 @@ export function filterDeactivationItems(
         filterType = [],
         showOnlyChecked = false,
         showOnlyErrors = false,
+        fileScopeOnly = false,
+        fileSelectionFilter = 'all',
+        retainedEmployeeIds
     } = options;
 
     return items.filter(emp => {
+        const isRetained = retainedEmployeeIds ? retainedEmployeeIds.has(emp.employeeId) : false;
+
+        // File scope filtering: if fileScopeOnly is true, only include items from the uploaded file
+        if (fileScopeOnly) {
+            if (!emp.inUploadedFile) return false;
+            if (fileSelectionFilter === 'checked' && !emp.selected && !isRetained) return false;
+            if (fileSelectionFilter === 'unchecked' && emp.selected) return false;
+        }
+
         // Quick filter checkboxes
-        if (showOnlyChecked && !emp.selected) return false;
+        if (showOnlyChecked && !emp.selected && !isRetained) return false;
         if (showOnlyErrors && emp.status !== 'error') return false;
 
         // Search text matching (name, ID, department name, group name)
