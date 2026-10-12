@@ -1,5 +1,5 @@
 import React from 'react';
-import { DeactivationMethod } from '../types';
+import { DeactivationMethod, TerminationType } from '../types';
 
 interface MethodSelectorProps {
     method: DeactivationMethod;
@@ -7,17 +7,51 @@ interface MethodSelectorProps {
     onContinue: () => void;
     onBack?: () => void;
     totalEmployeesCount: number;
+    terminationTypes?: TerminationType[];
 }
 
-export const MethodSelector: React.FC<MethodSelectorProps> = ({ method, setMethod, onContinue, onBack, totalEmployeesCount }) => {
+export const MethodSelector: React.FC<MethodSelectorProps> = ({ 
+    method, 
+    setMethod, 
+    onContinue, 
+    onBack, 
+    totalEmployeesCount,
+    terminationTypes = []
+}) => {
     return (
         <div className="bg-white p-8 rounded-2xl shadow-lg border border-gray-100 max-w-3xl mx-auto">
-            <div className="text-center mb-8">
+            <div className="text-center mb-6">
                 <h2 className="text-2xl font-bold text-gray-900 mb-2">Select Deactivation Method</h2>
                 <p className="text-sm text-gray-500">
                     Choose how you want to select and configure employees for deactivation ({totalEmployeesCount} active employees found in portal)
                 </p>
             </div>
+
+            {/* Termination Types Portal Informational Banner */}
+            {terminationTypes.length > 0 && (
+                <div className="mb-6 p-4 bg-amber-50/90 border border-amber-300 rounded-2xl text-xs sm:text-sm text-amber-950 flex items-start gap-3 shadow-2xs">
+                    <span className="text-xl shrink-0 mt-0.5">📋</span>
+                    <div className="space-y-1.5 flex-1">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                            <h4 className="font-bold text-amber-950 text-sm">
+                                Termination Types Found in Portal ({terminationTypes.length} detected)
+                            </h4>
+                            <span className="bg-amber-100 text-amber-900 border border-amber-300 px-2 py-0.5 rounded-full text-[11px] font-semibold">
+                                Portal Setting Check Advised
+                            </span>
+                        </div>
+                        <p className="text-xs text-amber-900 leading-relaxed">
+                            We detected the following active termination types in your Planday portal: <strong>{terminationTypes.map(t => t.name).join(', ')}</strong>.
+                        </p>
+                        <p className="text-xs text-amber-900 leading-relaxed">
+                            <strong>Please note:</strong> Even though termination types exist, they <strong>might or might not be required</strong> to be set in order to deactivate employees—this is controlled by a setting inside your Planday portal. Setting a termination type is not enforced as required in this app, but if your portal mandates it, deactivations submitted without one will be rejected by the Planday API.
+                        </p>
+                        <p className="text-xs text-amber-950 font-medium">
+                            👉 Please check your termination types and their required status inside your Planday portal (under <em>Settings &gt; Portal settings / Employees</em>).
+                        </p>
+                    </div>
+                </div>
+            )}
 
             <div className="grid sm:grid-cols-2 gap-5 mb-8">
                 {/* Method 1: Excel File (DEFAULT) */}

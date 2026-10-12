@@ -3,7 +3,7 @@ import VersionChecker from './VersionChecker';
 import { PageHeader } from './components/PageHeader';
 import { Stepper } from './components/Stepper';
 import { ProcessGuideModal } from './components/ProcessGuideModal';
-import { AuthStep } from './components/AuthStep';
+import { AuthStep, AuthStepLoadingProgress } from './components/AuthStep';
 import { MethodSelector } from './components/MethodSelector';
 import { TableEditorStep } from './components/TableEditorStep';
 import { ExcelUploadStep } from './components/ExcelUploadStep';
@@ -62,7 +62,9 @@ export const App: React.FC = () => {
     // Loading & Status
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [loadingMessage, setLoadingMessage] = useState<string>('');
+    const [loadingProgress, setLoadingProgress] = useState<AuthStepLoadingProgress | null>(null);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
+    const connectAbortControllerRef = useRef<AbortController | null>(null);
 
     // Modal
     const [isGuideOpen, setIsGuideOpen] = useState<boolean>(false);
@@ -94,39 +96,90 @@ export const App: React.FC = () => {
         }
     }, []);
 
+    const handleCancelConnect = () => {
+        if (connectAbortControllerRef.current) {
+            connectAbortControllerRef.current.abort();
+            connectAbortControllerRef.current = null;
+        }
+        resetService();
+        setIsLoading(false);
+        setLoadingProgress(null);
+        setLoadingMessage('');
+    };
+
     // Connect & Load Initial Data
     const handleConnect = async (creds: PlandayApiCredentials) => {
+        if (connectAbortControllerRef.current) {
+            connectAbortControllerRef.current.abort();
+        }
+        const abortController = new AbortController();
+        connectAbortControllerRef.current = abortController;
+        const signal = abortController.signal;
+
         setIsLoading(true);
         setErrorMessage(null);
         setLoadingMessage('Authenticating with Planday...');
+        setLoadingProgress({
+            phase: 'auth',
+            message: 'Authenticating with Planday API...'
+        });
 
         try {
             initializeService(creds);
             
             // Validate credentials by fetching portal info and basic data
-            const portal = await fetchPortalInfo();
+            setLoadingProgress({
+                phase: 'portal',
+                message: 'Verifying portal access and permissions...'
+            });
+            const portal = await fetchPortalInfo(signal);
+            if (signal.aborted) return;
             setPortalInfo(portal);
+            const portalName = portal?.portalName || portal?.name || 'Planday Portal';
 
-            setLoadingMessage('Loading departments, groups, and termination types...');
+            setLoadingMessage(`Connected to ${portalName}. Loading departments & groups...`);
+            setLoadingProgress({
+                phase: 'org',
+                portalName,
+                message: `Connected to ${portalName}. Loading departments, groups, and settings...`
+            });
+
             const [depts, groups, termTypes, empTypes] = await Promise.all([
-                fetchDepartments(),
-                fetchEmployeeGroups(),
-                fetchTerminationTypes(),
-                fetchEmployeeTypes(),
+                fetchDepartments(signal),
+                fetchEmployeeGroups(signal),
+                fetchTerminationTypes(signal),
+                fetchEmployeeTypes(signal),
             ]);
+            if (signal.aborted) return;
+
             setDepartments(depts);
             setEmployeeGroups(groups);
             setTerminationTypes(termTypes);
             setEmployeeTypes(empTypes);
 
             setLoadingMessage('Fetching active employees from portal...');
-            const emps = await fetchEmployees((loaded, total) => {
-                if (total) {
-                    setLoadingMessage(`Loading active employees (${loaded} of ${total})...`);
-                } else {
-                    setLoadingMessage(`Loading active employees (${loaded} fetched)...`);
-                }
+            setLoadingProgress({
+                phase: 'employees',
+                portalName,
+                loaded: 0,
+                message: 'Preparing high-speed employee directory download...'
             });
+
+            const emps = await fetchEmployees((loaded, total) => {
+                if (signal.aborted) return;
+                const msg = total 
+                    ? `Loading active employees (${loaded.toLocaleString()} of ${total.toLocaleString()})...`
+                    : `Loading active employees (${loaded.toLocaleString()} fetched)...`;
+                setLoadingMessage(msg);
+                setLoadingProgress({
+                    phase: 'employees',
+                    portalName,
+                    loaded,
+                    total,
+                    message: msg
+                });
+            }, signal);
+            if (signal.aborted) return;
             setEmployees(emps);
 
             // Create lookup maps for display
@@ -172,6 +225,11 @@ export const App: React.FC = () => {
             sessionStorage.setItem('plandayCredentials', JSON.stringify(creds));
             setCurrentStepIndex(1); // Proceed to Method Selection
         } catch (err: any) {
+            if (signal.aborted || err.message?.includes('aborted') || err.name === 'AbortError') {
+                console.log('Connection cancelled');
+                setErrorMessage('Connection cancelled by user.');
+                return;
+            }
             console.error('Connection failed:', err);
             setErrorMessage(err.message || 'Failed to connect to Planday. Please verify your credentials.');
             resetService();
@@ -180,6 +238,8 @@ export const App: React.FC = () => {
         } finally {
             setIsLoading(false);
             setLoadingMessage('');
+            setLoadingProgress(null);
+            connectAbortControllerRef.current = null;
         }
     };
 
@@ -461,6 +521,8 @@ export const App: React.FC = () => {
                         <AuthStep
                             onSuccess={handleConnect}
                             isLoading={isLoading}
+                            loadingProgress={loadingProgress}
+                            onCancel={handleCancelConnect}
                         />
                     )}
 
@@ -472,6 +534,7 @@ export const App: React.FC = () => {
                             onContinue={() => setCurrentStepIndex(2)}
                             onBack={() => setCurrentStepIndex(0)}
                             totalEmployeesCount={deactivationItems.length}
+                            terminationTypes={terminationTypes}
                         />
                     )}
 

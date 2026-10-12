@@ -1,14 +1,24 @@
 import React, { useState } from 'react';
 import { PlandayApiCredentials } from '../types';
 
+export interface AuthStepLoadingProgress {
+    phase: 'auth' | 'portal' | 'org' | 'employees' | 'ready';
+    loaded?: number;
+    total?: number;
+    message?: string;
+    portalName?: string;
+}
+
 interface AuthStepProps {
     onSuccess: (credentials: PlandayApiCredentials) => void;
     isLoading: boolean;
+    loadingProgress?: AuthStepLoadingProgress | null;
+    onCancel?: () => void;
 }
 
 const DEFAULT_CLIENT_ID = 'ea8d8bf4-a874-4535-8b2c-f7b7ccb87e86';
 
-export const AuthStep: React.FC<AuthStepProps> = ({ onSuccess, isLoading }) => {
+export const AuthStep: React.FC<AuthStepProps> = ({ onSuccess, isLoading, loadingProgress, onCancel }) => {
     const [token, setToken] = useState('');
     const [clientId, setClientId] = useState(DEFAULT_CLIENT_ID);
     const [showCustomClientId, setShowCustomClientId] = useState(false);
@@ -31,6 +41,10 @@ export const AuthStep: React.FC<AuthStepProps> = ({ onSuccess, isLoading }) => {
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
     };
+
+    const percent = loadingProgress?.loaded && loadingProgress?.total && loadingProgress.total > 0
+        ? Math.min(100, Math.round((loadingProgress.loaded / loadingProgress.total) * 100))
+        : null;
 
     return (
         <div className="grid md:grid-cols-2 gap-8 items-start max-w-7xl mx-auto">
@@ -102,7 +116,87 @@ export const AuthStep: React.FC<AuthStepProps> = ({ onSuccess, isLoading }) => {
                         )}
                     </div>
 
-                    <div className="pt-4">
+                    {/* Live Progress Card for Large Portals */}
+                    {isLoading && (
+                        <div className="mt-4 p-4 bg-blue-50/70 border border-blue-200 rounded-xl space-y-3">
+                            <div className="flex items-center justify-between text-xs">
+                                <div className="flex items-center gap-2 font-semibold text-blue-900">
+                                    <span className="w-2.5 h-2.5 rounded-full bg-blue-600 animate-ping"></span>
+                                    <span>
+                                        {loadingProgress?.portalName
+                                            ? `Connecting to ${loadingProgress.portalName}`
+                                            : 'Synchronizing with Planday'}
+                                    </span>
+                                </div>
+                                {percent !== null && (
+                                    <span className="font-bold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full">
+                                        {percent}%
+                                    </span>
+                                )}
+                            </div>
+
+                            {/* Step indicators */}
+                            <div className="space-y-1.5 text-xs text-gray-600">
+                                <div className="flex items-center gap-2">
+                                    <span className="text-emerald-600 font-bold">✓</span>
+                                    <span>API Authentication</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <span className={loadingProgress?.phase === 'org' || loadingProgress?.phase === 'employees' ? 'text-emerald-600 font-bold' : 'text-blue-600 animate-spin'}>
+                                        {loadingProgress?.phase === 'org' || loadingProgress?.phase === 'employees' ? '✓' : '⟳'}
+                                    </span>
+                                    <span>Portal Settings & Departments</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <span className={loadingProgress?.phase === 'employees' ? 'text-blue-600 animate-spin font-bold' : 'text-gray-400'}>
+                                        {loadingProgress?.phase === 'employees' ? '⟳' : '○'}
+                                    </span>
+                                    <span className={loadingProgress?.phase === 'employees' ? 'font-medium text-blue-900' : 'text-gray-500'}>
+                                        {loadingProgress?.total 
+                                            ? `Loading Employees: ${(loadingProgress.loaded || 0).toLocaleString()} of ${loadingProgress.total.toLocaleString()}`
+                                            : (loadingProgress?.message || 'Fetching active employees...')}
+                                    </span>
+                                </div>
+                            </div>
+
+                            {/* Progress Bar (when total is available) */}
+                            {percent !== null && (
+                                <div className="space-y-1">
+                                    <div className="w-full bg-blue-200/60 rounded-full h-2.5 overflow-hidden">
+                                        <div 
+                                            className="bg-blue-600 h-2.5 rounded-full transition-all duration-300 ease-out"
+                                            style={{ width: `${percent}%` }}
+                                        />
+                                    </div>
+                                    <div className="flex items-center justify-between text-[11px] text-blue-600">
+                                        <span>Parallel streaming (5 concurrent workers)</span>
+                                        <span>{(loadingProgress?.loaded || 0).toLocaleString()} / {loadingProgress?.total?.toLocaleString()}</span>
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="text-[11px] text-gray-500 bg-white/70 p-2.5 rounded-lg border border-blue-100 flex items-start gap-2">
+                                <span className="text-blue-500 text-xs">ℹ️</span>
+                                <span>
+                                    Portals with thousands of users stream 50 records per page. High-speed parallel batching fetches all records within API rate limits.
+                                </span>
+                            </div>
+
+                            {onCancel && (
+                                <div className="pt-1 flex justify-end">
+                                    <button
+                                        type="button"
+                                        onClick={onCancel}
+                                        className="text-xs text-red-600 hover:text-red-700 hover:underline font-medium cursor-pointer"
+                                    >
+                                        Cancel connection
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    <div className="pt-2">
                         <button
                             type="submit"
                             disabled={!token.trim() || isLoading}
@@ -114,7 +208,11 @@ export const AuthStep: React.FC<AuthStepProps> = ({ onSuccess, isLoading }) => {
                                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                                     </svg>
-                                    <span>Connecting & Verifying...</span>
+                                    <span>
+                                        {percent !== null 
+                                            ? `Loading Employees (${percent}%)...` 
+                                            : (loadingProgress?.message || 'Connecting & Verifying...')}
+                                    </span>
                                 </>
                             ) : (
                                 <span>Connect to Planday &rarr;</span>
@@ -169,3 +267,4 @@ export const AuthStep: React.FC<AuthStepProps> = ({ onSuccess, isLoading }) => {
         </div>
     );
 };
+

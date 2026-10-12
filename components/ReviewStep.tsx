@@ -3,6 +3,8 @@ import { DeactivationItem, Department, EmployeeGroup, EmployeeType, TerminationT
 import { formatDisplayDate } from '../dateUtils';
 import { MultiSelectMenu } from './MultiSelectMenu';
 import { filterDeactivationItems } from '../filterUtils';
+import { sortDeactivationItems, getNextSort, SortIndicator, SortField, SortDirection } from '../sortUtils';
+import { ApiPayloadPreview } from './ApiPayloadPreview';
 
 export interface ReviewStepProps {
     items: DeactivationItem[];
@@ -43,11 +45,18 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
     const [showOnlyChecked, setShowOnlyChecked] = useState<boolean>(true);
     const [showOnlyErrors, setShowOnlyErrors] = useState<boolean>(false);
 
+    // Interactive column sorting state
+    const [sortField, setSortField] = useState<SortField>('none');
+    const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+
     // Bulk actions state
     const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
     const [bulkDate, setBulkDate] = useState<string>('');
     const [bulkReason, setBulkReason] = useState<string>('');
     const [bulkTerminationType, setBulkTerminationType] = useState<string>('');
+    const [quickAssignTypeId, setQuickAssignTypeId] = useState<number>(() => {
+        return terminationTypes.length > 0 ? terminationTypes[0].id : 0;
+    });
 
     // Confirmation dialog modal state
     const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -88,9 +97,9 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
         return items.filter(i => i.status === 'error').length;
     }, [items]);
 
-    // Filter items using the robust All ([]) vs None ([-1]) vs Subset ID filter model
+    // Filter items using the robust All ([]) vs None ([-1]) vs Subset ID filter model + Interactive Sorting
     const filteredItems = useMemo(() => {
-        return filterDeactivationItems(items, {
+        const filtered = filterDeactivationItems(items, {
             searchQuery,
             filterDepartment,
             filterPrimaryDepartment,
@@ -99,7 +108,8 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
             showOnlyChecked,
             showOnlyErrors
         });
-    }, [items, searchQuery, filterDepartment, filterPrimaryDepartment, filterGroup, filterType, showOnlyChecked, showOnlyErrors]);
+        return sortDeactivationItems(filtered, sortField, sortDirection, terminationTypes, todayStr);
+    }, [items, searchQuery, filterDepartment, filterPrimaryDepartment, filterGroup, filterType, showOnlyChecked, showOnlyErrors, sortField, sortDirection, terminationTypes, todayStr]);
 
     const visibleSelectedCount = useMemo(() => {
         return filteredItems.filter(i => i.selected).length;
@@ -112,7 +122,8 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
         filterGroup.length > 0 ||
         filterType.length > 0 ||
         !showOnlyChecked || // since default is true in Review
-        showOnlyErrors
+        showOnlyErrors ||
+        sortField !== 'none'
     );
 
     const handleResetFilters = () => {
@@ -123,6 +134,14 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
         setFilterType([]);
         setShowOnlyChecked(true);
         setShowOnlyErrors(false);
+        setSortField('none');
+        setSortDirection('asc');
+    };
+
+    const handleToggleSort = (field: SortField) => {
+        const next = getNextSort(sortField, sortDirection, field);
+        setSortField(next.field);
+        setSortDirection(next.direction);
     };
 
     // Bulk selection and modification handlers
@@ -162,31 +181,23 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
         });
     };
 
-    const handleAutoAssignMissingTypes = () => {
+    const handleQuickAssignTerminationType = (typeIdToAssign?: number) => {
         if (terminationTypes.length === 0) return;
-        const defaultType = terminationTypes[0];
+        const targetId = typeIdToAssign || quickAssignTypeId || terminationTypes[0].id;
+        const typeObj = terminationTypes.find(t => t.id === targetId) || terminationTypes[0];
+        
+        // Find marked/selected employees without termination type (or if none selected, all missing)
         const missingIds = items
-            .filter(i => i.selected && !i.terminationTypeId)
+            .filter(i => (selectedCount > 0 ? i.selected : true) && !i.terminationTypeId)
             .map(i => i.employeeId);
         if (missingIds.length === 0) return;
-        onBulkUpdate(missingIds, {
-            terminationTypeId: defaultType.id,
-            terminationTypeName: defaultType.name
-        });
-    };
 
-    const handleQuickAssignDefaultTerminationType = () => {
-        if (terminationTypes.length === 0) return;
-        const defaultType = terminationTypes[0];
         if (onAssignDefaultTerminationType) {
-            onAssignDefaultTerminationType(defaultType.id, defaultType.name);
+            onAssignDefaultTerminationType(typeObj.id, typeObj.name);
         } else {
-            const missingIds = selectedItems
-                .filter(i => !i.terminationTypeId)
-                .map(i => i.employeeId);
             onBulkUpdate(missingIds, {
-                terminationTypeId: defaultType.id,
-                terminationTypeName: defaultType.name
+                terminationTypeId: typeObj.id,
+                terminationTypeName: typeObj.name
             });
         }
     };
@@ -249,28 +260,56 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                 </div>
             </div>
 
-            {/* Warning if termination types are mandated by portal and any selected item is missing one */}
-            {missingTermTypeCount > 0 && terminationTypes.length > 0 && (
-                <div className="bg-amber-50 border border-amber-300 p-4 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-xs">
+            {/* Termination Types Informational Banner */}
+            {terminationTypes.length > 0 && (
+                <div className="bg-amber-50/90 border border-amber-300 p-4 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-2xs">
                     <div className="flex items-start gap-3">
-                        <span className="text-xl">⚠️</span>
-                        <div>
-                            <h4 className="text-sm font-bold text-amber-900">
-                                Termination Type Required ({missingTermTypeCount} missing)
-                            </h4>
-                            <p className="text-xs text-amber-800 mt-0.5">
-                                This portal requires a termination type. Without one, Planday API will return a 400 error.
+                        <span className="text-xl shrink-0 mt-0.5">📋</span>
+                        <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                                <h4 className="text-sm font-bold text-amber-950">
+                                    Termination Types Found in Portal ({terminationTypes.length} detected)
+                                </h4>
+                                <span className="bg-amber-100 text-amber-900 border border-amber-300 px-2 py-0.5 rounded-full text-[11px] font-semibold">
+                                    Portal Setting Check Advised
+                                </span>
+                            </div>
+                            <p className="text-xs text-amber-900 leading-relaxed">
+                                We found active termination types in your portal: <strong>{terminationTypes.map(t => t.name).join(', ')}</strong>.
+                            </p>
+                            <p className="text-xs text-amber-900 leading-relaxed">
+                                <strong>Please note:</strong> Sometimes, even though termination types exist, they might not be required to be set—this is a setting within your Planday portal. Selecting a termination type is <strong>optional in this app</strong>. However, if your portal requires it to deactivate employees, any deactivations submitted without one will return an API error.
+                            </p>
+                            <p className="text-xs text-amber-950 font-medium">
+                                👉 Please check your termination types and their required status inside the Planday portal.
                             </p>
                         </div>
                     </div>
 
-                    <button
-                        type="button"
-                        onClick={handleQuickAssignDefaultTerminationType}
-                        className="bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs px-4 py-2 rounded-xl transition-colors shrink-0 shadow-xs cursor-pointer"
-                    >
-                        Set to "{terminationTypes[0].name}" for all {missingTermTypeCount}
-                    </button>
+                    {missingTermTypeCount > 0 && (
+                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0 bg-white/90 p-2.5 rounded-xl border border-amber-300 shadow-2xs">
+                            <div className="flex items-center gap-1.5">
+                                <span className="text-[11px] font-semibold text-amber-950 shrink-0">Quick Assign:</span>
+                                <select
+                                    value={quickAssignTypeId}
+                                    onChange={e => setQuickAssignTypeId(Number(e.target.value))}
+                                    className="bg-white border border-amber-300 text-amber-950 px-2.5 py-1.5 rounded-lg text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer shadow-2xs"
+                                >
+                                    {terminationTypes.map(t => (
+                                        <option key={t.id} value={t.id}>{t.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => handleQuickAssignTerminationType(quickAssignTypeId)}
+                                className="bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs px-3.5 py-1.5 rounded-lg transition-colors shadow-xs cursor-pointer text-center"
+                                title="Quickly assign the selected termination type to all marked employees without one"
+                            >
+                                Set to all {missingTermTypeCount}
+                            </button>
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -398,6 +437,51 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                                 <span>⚠️ Errors ({failedItemsCount})</span>
                             </label>
                         )}
+
+                        {/* Interactive Sort Dropdown */}
+                        <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-300 rounded-xl px-2.5 py-1.5 shadow-2xs">
+                            <span className="text-xs text-gray-500 font-medium shrink-0 flex items-center gap-1">
+                                <svg className="w-3.5 h-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12" />
+                                </svg>
+                                <span>Sort:</span>
+                            </span>
+                            <select
+                                value={`${sortField}-${sortDirection}`}
+                                onChange={e => {
+                                    const [field, dir] = e.target.value.split('-') as [SortField, SortDirection];
+                                    setSortField(field);
+                                    setSortDirection(dir);
+                                }}
+                                className="bg-transparent text-xs font-semibold text-gray-800 focus:outline-none cursor-pointer"
+                            >
+                                <option value="none-asc">Default Order</option>
+                                <option value="errors-asc">⚠️ Required Errors First</option>
+                                <option value="missingTermType-asc">⚠️ Blank Termination Type First (Info Error)</option>
+                                <option value="name-asc">Employee Name (A → Z)</option>
+                                <option value="name-desc">Employee Name (Z → A)</option>
+                                <option value="id-asc">Employee ID (Low to High)</option>
+                                <option value="id-desc">Employee ID (High to Low)</option>
+                                <option value="date-asc">Deactivation Date (Earliest First)</option>
+                                <option value="date-desc">Deactivation Date (Latest First)</option>
+                                <option value="terminationType-asc">Termination Type (A → Z)</option>
+                                <option value="terminationType-desc">Termination Type (Z → A)</option>
+                                <option value="selected-asc">Checked / Selected First</option>
+                                <option value="selected-desc">Unchecked First</option>
+                                <option value="keepShifts-asc">Keep Shifts: True First</option>
+                                <option value="keepShifts-desc">Keep Shifts: False First</option>
+                            </select>
+                            {sortField !== 'none' && (
+                                <button
+                                    type="button"
+                                    onClick={() => { setSortField('none'); setSortDirection('asc'); }}
+                                    className="text-[11px] text-gray-400 hover:text-red-600 ml-1 cursor-pointer"
+                                    title="Reset to default sorting"
+                                >
+                                    ✕
+                                </button>
+                            )}
+                        </div>
 
                         {hasActiveFilters && (
                             <button
@@ -551,28 +635,6 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                             )}
                         </div>
                     )}
-
-                    {/* Warning if selected employees are missing required Termination Type */}
-                    {missingTermTypeCount > 0 && (
-                        <div className="bg-red-50 border-2 border-red-300 rounded-xl p-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-red-900">
-                            <div className="flex items-center gap-2">
-                                <span className="w-5 h-5 rounded-full bg-red-600 text-white flex items-center justify-center font-bold text-xs shrink-0">!</span>
-                                <div className="text-xs">
-                                    <span className="font-bold">Required field missing: </span>
-                                    <span><strong>{missingTermTypeCount}</strong> marked employee{missingTermTypeCount > 1 ? 's require' : ' requires'} a Termination Type before deactivation.</span>
-                                </div>
-                            </div>
-                            {terminationTypes.length > 0 && (
-                                <button
-                                    type="button"
-                                    onClick={handleAutoAssignMissingTypes}
-                                    className="bg-red-600 hover:bg-red-700 text-white font-semibold text-xs px-3 py-1.5 rounded-lg shadow-xs cursor-pointer shrink-0 transition-colors"
-                                >
-                                    Set to "{terminationTypes[0].name}" for all {missingTermTypeCount}
-                                </button>
-                            )}
-                        </div>
-                    )}
                 </div>
             </div>
 
@@ -582,44 +644,143 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                     <table className="w-full text-left border-collapse text-xs sm:text-sm">
                         <thead className="bg-gray-100 text-gray-700 font-semibold sticky top-0 z-10 border-b border-gray-200">
                             <tr>
-                                <th className="p-3 w-12 text-center">
-                                    <input
-                                        type="checkbox"
-                                        checked={filteredItems.length > 0 && visibleSelectedCount === filteredItems.length}
-                                        onChange={e => handleSelectAllVisible(e.target.checked)}
-                                        className="w-4 h-4 text-blue-600 rounded cursor-pointer"
-                                        title="Select/Deselect All Visible"
-                                    />
+                                <th className="p-3 w-12 text-center group cursor-pointer hover:bg-gray-200/70 transition-colors">
+                                    <div className="flex items-center justify-center gap-1">
+                                        <input
+                                            type="checkbox"
+                                            checked={filteredItems.length > 0 && visibleSelectedCount === filteredItems.length}
+                                            onChange={e => handleSelectAllVisible(e.target.checked)}
+                                            className="w-4 h-4 text-blue-600 rounded cursor-pointer"
+                                            title="Select/Deselect All Visible"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => handleToggleSort('selected')}
+                                            className="text-gray-400 hover:text-blue-600 cursor-pointer p-0.5"
+                                            title="Sort by Selection Status"
+                                        >
+                                            <SortIndicator field="selected" currentField={sortField} direction={sortDirection} />
+                                        </button>
+                                    </div>
                                 </th>
-                                <th className="p-3 w-24">ID</th>
-                                <th className="p-3">Employee Name</th>
-                                <th className="p-3 min-w-[190px]">
-                                    Deactivation Date
+                                <th 
+                                    onClick={() => handleToggleSort('id')}
+                                    className="p-3 w-24 cursor-pointer select-none hover:bg-gray-200/80 transition-colors group"
+                                    title="Click to sort by Employee ID"
+                                >
+                                    <div className="flex items-center gap-1">
+                                        <span>ID</span>
+                                        <SortIndicator field="id" currentField={sortField} direction={sortDirection} />
+                                    </div>
+                                </th>
+                                <th 
+                                    onClick={() => handleToggleSort('name')}
+                                    className="p-3 cursor-pointer select-none hover:bg-gray-200/80 transition-colors group"
+                                    title="Click to sort by Employee Name"
+                                >
+                                    <div className="flex items-center justify-between gap-1.5">
+                                        <div className="flex items-center gap-1">
+                                            <span>Employee Name</span>
+                                            <SortIndicator 
+                                                field="name" 
+                                                currentField={sortField} 
+                                                direction={sortDirection} 
+                                                isSpecialError={sortField === 'errors'}
+                                            />
+                                        </div>
+                                        {failedItemsCount > 0 && (
+                                            <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setSortField('errors');
+                                                    setSortDirection('asc');
+                                                }}
+                                                className={`text-[10px] font-medium px-1.5 py-0.5 rounded border transition-colors cursor-pointer ${
+                                                    sortField === 'errors'
+                                                        ? 'bg-red-500 text-white border-red-600 font-bold shadow-2xs'
+                                                        : 'bg-red-50 text-red-800 border-red-200 hover:bg-red-100'
+                                                }`}
+                                                title="Sort rows with required/failed errors to top"
+                                            >
+                                                ⚠️ Errors First ({failedItemsCount})
+                                            </button>
+                                        )}
+                                    </div>
+                                </th>
+                                <th 
+                                    onClick={() => handleToggleSort('date')}
+                                    className="p-3 min-w-[190px] cursor-pointer select-none hover:bg-gray-200/80 transition-colors group"
+                                    title="Click to sort by Deactivation Date"
+                                >
+                                    <div className="flex items-center gap-1">
+                                        <span>Deactivation Date</span>
+                                        <SortIndicator field="date" currentField={sortField} direction={sortDirection} />
+                                    </div>
                                     <span className="block text-[11px] font-normal text-gray-500">
                                         Defaults to Today
                                     </span>
                                 </th>
-                                <th className="p-3 min-w-[170px]">
-                                    Reason
+                                <th 
+                                    onClick={() => handleToggleSort('reason')}
+                                    className="p-3 min-w-[170px] cursor-pointer select-none hover:bg-gray-200/80 transition-colors group"
+                                    title="Click to sort by Reason"
+                                >
+                                    <div className="flex items-center gap-1">
+                                        <span>Reason</span>
+                                        <SortIndicator field="reason" currentField={sortField} direction={sortDirection} />
+                                    </div>
                                     <span className="block text-[11px] font-normal text-gray-500">
                                         Optional note
                                     </span>
                                 </th>
-                                <th className="p-3 min-w-[190px]">
-                                    <div className="flex items-center gap-1.5">
-                                        <span>Termination Type</span>
+                                <th 
+                                    onClick={() => handleToggleSort('terminationType')}
+                                    className="p-3 min-w-[210px] cursor-pointer select-none hover:bg-gray-200/80 transition-colors group"
+                                    title="Click to sort by Termination Type. Cycles: Blank First → A-Z → Z-A"
+                                >
+                                    <div className="flex items-center justify-between gap-1.5">
+                                        <div className="flex items-center gap-1.5">
+                                            <span>Termination Type</span>
+                                            <SortIndicator 
+                                                field="terminationType" 
+                                                currentField={sortField} 
+                                                direction={sortDirection} 
+                                                isSpecialMissing={sortField === 'missingTermType'} 
+                                            />
+                                        </div>
                                         {terminationTypes.length > 0 && (
-                                            <span className="text-[10px] font-bold text-red-600 bg-red-100 border border-red-300 px-1.5 py-0.2 rounded">
-                                                Required
-                                            </span>
+                                            <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setSortField('missingTermType');
+                                                    setSortDirection('asc');
+                                                }}
+                                                className={`text-[10px] font-medium px-1.5 py-0.5 rounded border transition-colors cursor-pointer ${
+                                                    sortField === 'missingTermType'
+                                                        ? 'bg-amber-400 text-amber-950 border-amber-500 font-bold shadow-2xs'
+                                                        : 'bg-amber-50 text-amber-900 border-amber-200 hover:bg-amber-100'
+                                                }`}
+                                                title="Sort rows with blank termination type (info error) to top"
+                                            >
+                                                ⚠️ Blank First
+                                            </button>
                                         )}
                                     </div>
                                     <span className="block text-[11px] font-normal text-gray-500">
-                                        {terminationTypes.length > 0 ? "Mandated by portal" : "Optional"}
+                                        {terminationTypes.length > 0 ? "Check portal required status" : "None in portal"}
                                     </span>
                                 </th>
-                                <th className="p-3 w-40">
-                                    Keep Shifts?
+                                <th 
+                                    onClick={() => handleToggleSort('keepShifts')}
+                                    className="p-3 w-40 cursor-pointer select-none hover:bg-gray-200/80 transition-colors group"
+                                    title="Click to sort by Keep Shifts"
+                                >
+                                    <div className="flex items-center gap-1">
+                                        <span>Keep Shifts?</span>
+                                        <SortIndicator field="keepShifts" currentField={sortField} direction={sortDirection} />
+                                    </div>
                                     <span className="block text-[11px] font-normal text-gray-500">
                                         Default: False (Unassign)
                                     </span>
@@ -640,13 +801,13 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                             ) : (
                                 filteredItems.map(item => {
                                     const effectiveDate = item.deactivationDate || todayStr;
-                                    const isTypeMissing = item.selected && terminationTypes.length > 0 && !item.terminationTypeId;
+                                    const isMissingTerminationType = terminationTypes.length > 0 && !item.terminationTypeId;
                                     return (
                                         <tr
                                             key={item.employeeId}
                                             className={`transition-colors hover:bg-blue-50/30 ${
-                                                item.selected ? 'bg-blue-50/50 font-medium' : ''
-                                            } ${isTypeMissing ? 'bg-red-50/30' : ''}`}
+                                                item.selected ? (isMissingTerminationType ? 'bg-amber-50/30 font-medium' : 'bg-blue-50/50 font-medium') : ''
+                                            }`}
                                         >
                                             {/* Checkbox */}
                                             <td className="p-3 text-center">
@@ -670,11 +831,15 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
 
                                             {/* Name & Status badges */}
                                             <td className="p-3 text-gray-900 font-semibold">
-                                                <div className="flex items-center gap-2">
+                                                <div className="flex items-center gap-2 flex-wrap">
                                                     <span>{item.firstName} {item.lastName}</span>
-                                                    {isTypeMissing && (
-                                                        <span className="inline-flex items-center text-[10px] font-bold text-red-700 bg-red-100 border border-red-300 px-1.5 py-0.2 rounded shrink-0">
-                                                            ⚠️ Type Required
+                                                    {isMissingTerminationType && (
+                                                        <span 
+                                                            className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-800 bg-amber-50 border border-amber-300 px-1.5 py-0.5 rounded-md shadow-2xs"
+                                                            title="Termination type is unassigned. Depending on portal settings, a termination type might be required to deactivate this employee."
+                                                        >
+                                                            <span className="text-amber-500 text-xs shrink-0">⚠️</span>
+                                                            <span>Termination type might be required</span>
                                                         </span>
                                                     )}
                                                 </div>
@@ -745,23 +910,24 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                                                                     selected: true
                                                                 });
                                                             }}
-                                                            className={`w-full px-2.5 py-1.5 text-xs rounded-lg transition-all focus:outline-none focus:ring-2 ${
-                                                                isTypeMissing
-                                                                    ? 'border-2 border-red-500 bg-red-50/80 text-red-950 font-bold focus:ring-red-500 shadow-2xs'
+                                                            className={`w-full px-2.5 py-1.5 text-xs rounded-lg transition-all focus:outline-none focus:ring-2 border font-medium ${
+                                                                isMissingTerminationType
+                                                                    ? 'border-amber-300 bg-amber-50/40 text-gray-800 focus:ring-amber-400'
                                                                     : 'border border-gray-300 bg-white text-gray-800 focus:ring-blue-500'
                                                             }`}
                                                         >
-                                                            <option value="" disabled>
-                                                                {isTypeMissing ? '⚠️ Select Type (Required)' : '-- Select Type --'}
-                                                            </option>
+                                                            <option value="">-- None / Select Type --</option>
                                                             {terminationTypes.map(t => (
                                                                 <option key={t.id} value={t.id}>{t.name}</option>
                                                             ))}
                                                         </select>
-                                                        {isTypeMissing && (
-                                                            <div className="mt-1 flex items-center gap-1 text-[10px] font-bold text-red-700 bg-red-100/90 border border-red-200 px-1.5 py-0.5 rounded">
-                                                                <span className="w-1.5 h-1.5 rounded-full bg-red-600 animate-pulse"></span>
-                                                                <span>Required field</span>
+                                                        {isMissingTerminationType && (
+                                                            <div 
+                                                                className="mt-1 flex items-center gap-1 text-[10px] font-medium text-amber-800 bg-amber-50/80 border border-amber-200 px-1.5 py-0.5 rounded leading-tight"
+                                                                title="Termination type is unassigned. Depending on your portal settings, it might be required."
+                                                            >
+                                                                <span className="text-amber-500 text-xs shrink-0">⚠️</span>
+                                                                <span>Might be required in portal</span>
                                                             </div>
                                                         )}
                                                     </div>
@@ -807,6 +973,13 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                 </div>
             </div>
 
+            {/* API Request & Response Preview for First Rows */}
+            <ApiPayloadPreview 
+                items={filteredItems.length > 0 ? filteredItems : items} 
+                terminationTypes={terminationTypes} 
+                todayStr={todayStr} 
+            />
+
             {/* Bottom Actions Bar */}
             <div className="flex items-center justify-between p-4 bg-white rounded-2xl shadow-lg border border-gray-100">
                 <button
@@ -818,13 +991,6 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                 </button>
 
                 <div className="flex items-center gap-3">
-                    {missingTermTypeCount > 0 && (
-                        <span className="text-xs font-bold text-red-700 bg-red-100/90 border border-red-300 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-red-600 animate-pulse"></span>
-                            <span>{missingTermTypeCount} Missing Termination Type</span>
-                        </span>
-                    )}
-
                     <span className="text-sm text-gray-600 hidden sm:inline">
                         <strong>{selectedCount}</strong> employee{selectedCount === 1 ? '' : 's'} queued
                     </span>
@@ -873,20 +1039,34 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({
                                 • <strong>{unassignShiftsCount}</strong> will be unassigned from future shifts ({keepShiftsCount} will keep shifts).
                             </p>
                             {missingTermTypeCount > 0 && terminationTypes.length > 0 && (
-                                <div className="mt-2 bg-red-100 border border-red-300 text-red-950 p-2.5 rounded-lg space-y-1">
-                                    <p className="font-bold flex items-center gap-1.5">
-                                        <span>⚠️ Warning: {missingTermTypeCount} employee(s) have no Termination Type!</span>
+                                <div className="mt-2 bg-amber-100 border border-amber-300 text-amber-950 p-2.5 rounded-lg space-y-1">
+                                    <p className="font-bold flex items-center gap-1.5 text-xs text-amber-950">
+                                        <span>📋 Portal Setting Notice: {missingTermTypeCount} employee(s) have no Termination Type</span>
                                     </p>
-                                    <p className="text-[11px] text-red-900">
-                                        Planday portal typically requires a termination type and may reject these records with a 400 Bad Request error.
+                                    <p className="text-[11px] text-amber-900 leading-relaxed">
+                                        Termination types were found in your portal ({terminationTypes.map(t => t.name).join(', ')}). In Planday, setting a termination type might or might not be required depending on your portal settings. If your portal requires it, Planday API will reject deactivating employees without one.
                                     </p>
-                                    <button
-                                        type="button"
-                                        onClick={handleAutoAssignMissingTypes}
-                                        className="mt-1 bg-red-600 hover:bg-red-700 text-white font-semibold text-[11px] px-2.5 py-1 rounded-md transition-colors cursor-pointer"
-                                    >
-                                        Auto-Assign "{terminationTypes[0].name}" to missing {missingTermTypeCount} now
-                                    </button>
+                                    <p className="text-[11px] text-amber-950 font-medium">
+                                        Please check your termination types and required status inside the portal.
+                                    </p>
+                                    <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                                        <select
+                                            value={quickAssignTypeId}
+                                            onChange={e => setQuickAssignTypeId(Number(e.target.value))}
+                                            className="bg-white border border-amber-300 text-amber-950 px-2 py-1 rounded-md text-[11px] font-medium"
+                                        >
+                                            {terminationTypes.map(t => (
+                                                <option key={t.id} value={t.id}>{t.name}</option>
+                                            ))}
+                                        </select>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleQuickAssignTerminationType(quickAssignTypeId)}
+                                            className="bg-amber-600 hover:bg-amber-700 text-white font-semibold text-[11px] px-2.5 py-1 rounded-md transition-colors cursor-pointer"
+                                        >
+                                            Assign to all {missingTermTypeCount} now
+                                        </button>
+                                    </div>
                                 </div>
                             )}
                             <p className="text-red-700 font-semibold pt-1">

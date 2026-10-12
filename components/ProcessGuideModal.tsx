@@ -104,6 +104,28 @@ export const ProcessGuideModal: React.FC<ProcessGuideModalProps> = ({ isOpen, on
                         </div>
                     </div>
 
+                    <div>
+                        <h4 className="font-bold text-gray-900 text-base mb-3 flex items-center gap-2">
+                            <span>4.</span> Termination Types & Portal Settings
+                        </h4>
+                        <div className="pl-6 space-y-2">
+                            <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-lg">
+                                <span className="font-semibold text-amber-950 text-xs uppercase tracking-wide block mb-1">
+                                    Portal-Configured Setting
+                                </span>
+                                <p className="text-xs text-amber-900 leading-relaxed">
+                                    If termination types are found in your Planday portal, they will be loaded into the app automatically.
+                                </p>
+                                <p className="text-xs text-amber-900 mt-1.5 leading-relaxed">
+                                    <strong>Important:</strong> Sometimes, even though termination types exist, they might not be required to be set—this is a setting configured inside your Planday portal. For this reason, setting a termination type is <strong>optional in this app</strong>. However, if your portal's configuration makes it required, attempting to deactivate an employee without a termination type will be rejected by the Planday API.
+                                </p>
+                                <p className="text-xs text-amber-950 font-medium mt-1.5">
+                                    👉 We encourage you to check your termination types and required status inside the Planday portal (under <em>Settings &gt; Portal settings / Employees</em>).
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
                     <div className="border-t border-gray-200 pt-4 text-xs text-gray-500 space-y-1.5">
                         <div className="flex items-center gap-1.5 font-medium text-gray-700">
                             <span>🔒</span> Security & Permissions Note

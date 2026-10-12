@@ -219,9 +219,9 @@ export const ExcelUploadStep: React.FC<ExcelUploadStepProps> = ({
             ],
             [
                 'Termination Type',
-                'Optional',
-                'Type Name or numeric ID',
-                'The specific termination type configured in your Planday portal. Enter the exact name or numeric ID (see list below).'
+                'Optional (May be required by portal)',
+                'Type Name or numeric ID | Leave Blank',
+                'The specific termination type configured in your Planday portal. Important: Even though termination types exist in your portal, setting one might or might not be required depending on your portal configuration. Check your termination types and required status inside the Planday portal. If required by your portal, enter the exact name or numeric ID (see list below).'
             ],
             [
                 'Keep Shifts (TRUE/FALSE*)',
@@ -1048,13 +1048,22 @@ export const ExcelUploadStep: React.FC<ExcelUploadStepProps> = ({
                 </p>
 
                 {terminationTypes.length > 0 && (
-                    <div className="mb-6 inline-flex flex-wrap items-center justify-center gap-1.5 bg-blue-50 border border-blue-200 px-3 py-1.5 rounded-xl text-xs text-blue-800">
-                        <span className="font-semibold text-blue-900">Valid Termination Types for this portal:</span>
-                        {terminationTypes.map(t => (
-                            <span key={t.id} className="bg-white border border-blue-200 text-blue-700 px-2 py-0.5 rounded text-[11px] font-medium">
-                                {t.name}
+                    <div className="mb-6 p-4 bg-amber-50/90 border border-amber-300 rounded-2xl text-left text-xs text-amber-950 space-y-1.5 shadow-2xs">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                                <span className="text-base">📋</span>
+                                <span className="font-bold text-amber-950 text-sm">Termination Types Found in Portal:</span>
+                            </div>
+                            <span className="bg-amber-100 text-amber-900 border border-amber-300 px-2 py-0.5 rounded-full text-[11px] font-semibold">
+                                {terminationTypes.length} types detected ({terminationTypes.map(t => t.name).join(', ')})
                             </span>
-                        ))}
+                        </div>
+                        <p className="text-amber-900 leading-relaxed">
+                            <strong>Portal Setting Notice:</strong> In Planday, even though termination types exist in your portal, setting one <strong>might or might not be required</strong> to deactivate employees depending on your portal settings. Setting a termination type in your file is <strong>optional in this app</strong>, but if your portal mandates it, Planday API will reject requests without one.
+                        </p>
+                        <p className="text-amber-950 font-medium">
+                            👉 Please check the termination types and required status inside your Planday portal.
+                        </p>
                     </div>
                 )}
 
