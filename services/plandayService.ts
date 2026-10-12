@@ -1,6 +1,7 @@
 import { PlandayApiCredentials, Employee, Department, EmployeeGroup, TerminationType, DeactivationPayload } from '../types';
 
 const AUTH_URL = 'https://id.planday.com/connect/token';
+const REVOCATION_URL = 'https://id.planday.com/connect/revocation';
 const API_BASE_URL = 'https://openapi.planday.com';
 
 let credentials_internal: PlandayApiCredentials | null = null;
@@ -20,6 +21,38 @@ export function resetService() {
     credentials_internal = null;
     accessToken = null;
     tokenExpiry = null;
+}
+
+// Revoke refresh token against Planday OAuth server
+export async function revokeToken(): Promise<void> {
+    let creds = credentials_internal;
+    if (!creds) {
+        try {
+            const saved = sessionStorage.getItem('plandayCredentials');
+            if (saved) creds = JSON.parse(saved);
+        } catch {}
+    }
+    if (!creds || !creds.clientId || !creds.refreshToken) {
+        resetService();
+        return;
+    }
+
+    try {
+        const payload = new URLSearchParams({
+            client_id: creds.clientId,
+            token: creds.refreshToken,
+        });
+
+        await fetch(REVOCATION_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: payload.toString(),
+        });
+    } catch (err) {
+        console.warn('Failed to revoke Planday token on server:', err);
+    } finally {
+        resetService();
+    }
 }
 
 async function wait(ms: number) {
@@ -337,6 +370,21 @@ export async function fetchTerminationTypes(signal?: AbortSignal): Promise<Termi
         console.warn("Could not fetch termination types (portal may not configure them):", e);
         return [];
     }
+}
+
+export async function fetchAllDefinitions(signal?: AbortSignal): Promise<{
+    departments: Department[];
+    employeeGroups: EmployeeGroup[];
+    terminationTypes: TerminationType[];
+    employeeTypes: { id: number; name: string }[];
+}> {
+    const [departments, employeeGroups, terminationTypes, employeeTypes] = await Promise.all([
+        fetchDepartments(signal),
+        fetchEmployeeGroups(signal),
+        fetchTerminationTypes(signal),
+        fetchEmployeeTypes(signal),
+    ]);
+    return { departments, employeeGroups, terminationTypes, employeeTypes };
 }
 
 export async function fetchEmployees(

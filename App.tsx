@@ -24,6 +24,8 @@ import {
 import { 
     initializeService, 
     resetService, 
+    revokeToken,
+    fetchAllDefinitions,
     fetchEmployees, 
     fetchDepartments, 
     fetchEmployeeGroups, 
@@ -50,6 +52,7 @@ export const App: React.FC = () => {
     // Authentication & Account State
     const [credentials, setCredentials] = useState<PlandayApiCredentials | null>(null);
     const [portalInfo, setPortalInfo] = useState<any | null>(null);
+    const [portalName, setPortalName] = useState<string | null>(null);
 
     // Organization Data
     const [employees, setEmployees] = useState<Employee[]>([]);
@@ -96,6 +99,19 @@ export const App: React.FC = () => {
         }
     }, []);
 
+    // Initial data fetch after logging in (fetch definitions & portal name if not set)
+    useEffect(() => {
+        if (currentStepIndex !== 0 && !portalName) {
+            fetchPortalInfo()
+                .then(info => {
+                    if (info && (info.name || info.portalName)) {
+                        setPortalName(info.name || info.portalName);
+                    }
+                })
+                .catch(console.error);
+        }
+    }, [currentStepIndex, portalName]);
+
     const handleCancelConnect = () => {
         if (connectAbortControllerRef.current) {
             connectAbortControllerRef.current.abort();
@@ -135,13 +151,14 @@ export const App: React.FC = () => {
             const portal = await fetchPortalInfo(signal);
             if (signal.aborted) return;
             setPortalInfo(portal);
-            const portalName = portal?.portalName || portal?.name || 'Planday Portal';
+            const resolvedPortalName = portal?.name || portal?.portalName || 'Planday Portal';
+            setPortalName(resolvedPortalName);
 
-            setLoadingMessage(`Connected to ${portalName}. Loading departments & groups...`);
+            setLoadingMessage(`Connected to ${resolvedPortalName}. Loading departments & groups...`);
             setLoadingProgress({
                 phase: 'org',
-                portalName,
-                message: `Connected to ${portalName}. Loading departments, groups, and settings...`
+                portalName: resolvedPortalName,
+                message: `Connected to ${resolvedPortalName}. Loading departments, groups, and settings...`
             });
 
             const [depts, groups, termTypes, empTypes] = await Promise.all([
@@ -160,7 +177,7 @@ export const App: React.FC = () => {
             setLoadingMessage('Fetching active employees from portal...');
             setLoadingProgress({
                 phase: 'employees',
-                portalName,
+                portalName: resolvedPortalName,
                 loaded: 0,
                 message: 'Preparing high-speed employee directory download...'
             });
@@ -173,7 +190,7 @@ export const App: React.FC = () => {
                 setLoadingMessage(msg);
                 setLoadingProgress({
                     phase: 'employees',
-                    portalName,
+                    portalName: resolvedPortalName,
                     loaded,
                     total,
                     message: msg
@@ -234,6 +251,7 @@ export const App: React.FC = () => {
             setErrorMessage(err.message || 'Failed to connect to Planday. Please verify your credentials.');
             resetService();
             setCredentials(null);
+            setPortalName(null);
             sessionStorage.removeItem('plandayCredentials');
         } finally {
             setIsLoading(false);
@@ -243,16 +261,135 @@ export const App: React.FC = () => {
         }
     };
 
-    const handleDisconnect = () => {
-        resetService();
-        setCredentials(null);
-        setPortalInfo(null);
-        setEmployees([]);
-        setTerminationTypes([]);
-        setDeactivationItems([]);
-        setResults([]);
-        sessionStorage.removeItem('plandayCredentials');
-        setCurrentStepIndex(0);
+    // Change Credentials / Log Out: Revoke token, clear storage and memory, reset app state
+    const handleChangeCredentials = async () => {
+        if (connectAbortControllerRef.current) {
+            connectAbortControllerRef.current.abort();
+            connectAbortControllerRef.current = null;
+        }
+        setIsLoading(true);
+        setLoadingMessage('Disconnecting from Planday...');
+        try {
+            await revokeToken();
+        } catch (e) {
+            console.warn('Error during token revocation:', e);
+        } finally {
+            // 1. Clear session storage
+            sessionStorage.removeItem('plandayCredentials');
+            
+            // 2. Clear API service memory
+            resetService();
+            
+            // 3. Reset application states
+            setPortalName(null);
+            setPortalInfo(null);
+            setCredentials(null);
+            setEmployees([]);
+            setDepartments([]);
+            setEmployeeGroups([]);
+            setEmployeeTypes([]);
+            setTerminationTypes([]);
+            setDeactivationItems([]);
+            setResults([]);
+            setErrorMessage(null);
+            setIsLoading(false);
+            setLoadingMessage('');
+            setLoadingProgress(null);
+            
+            // 4. Return to Auth screen
+            setCurrentStepIndex(0);
+        }
+    };
+
+    // Re-sync / Refresh Portal Info & Definitions
+    const handleManualRefresh = async () => {
+        setIsLoading(true);
+        setLoadingMessage("Refreshing portal data...");
+        setErrorMessage(null);
+        try {
+            // Fetch fresh portal details and related definitions concurrently
+            const [info, defs, emps] = await Promise.all([
+                fetchPortalInfo(),
+                fetchAllDefinitions(),
+                fetchEmployees()
+            ]);
+
+            if (info) {
+                setPortalInfo(info);
+                const name = info.name || info.portalName;
+                if (name) setPortalName(name);
+            }
+            if (defs) {
+                setDepartments(defs.departments);
+                setEmployeeGroups(defs.employeeGroups);
+                setTerminationTypes(defs.terminationTypes);
+                setEmployeeTypes(defs.employeeTypes);
+            }
+            if (emps) {
+                setEmployees(emps);
+
+                // Create lookup maps for display
+                const deptMap = new Map<number, string>();
+                if (defs?.departments) {
+                    defs.departments.forEach(d => deptMap.set(d.id, d.name));
+                } else {
+                    departments.forEach(d => deptMap.set(d.id, d.name));
+                }
+
+                const groupMap = new Map<number, string>();
+                if (defs?.employeeGroups) {
+                    defs.employeeGroups.forEach(g => groupMap.set(g.id, g.name));
+                } else {
+                    employeeGroups.forEach(g => groupMap.set(g.id, g.name));
+                }
+
+                // Re-populate and prune any stale selections
+                setDeactivationItems(prevItems => {
+                    const prevMap = new Map<number, DeactivationItem>();
+                    prevItems.forEach(item => prevMap.set(item.employeeId, item));
+
+                    return emps.map(emp => {
+                        const existing = prevMap.get(emp.id);
+                        const deptIds = emp.departmentIds || [];
+                        const groupIds = emp.employeeGroupIds || [];
+
+                        const deptNames = deptIds
+                            .map(id => deptMap.get(id))
+                            .filter((n): n is string => Boolean(n));
+
+                        const grpNames = groupIds
+                            .map(id => groupMap.get(id))
+                            .filter((n): n is string => Boolean(n));
+
+                        return {
+                            employeeId: emp.id,
+                            salaryIdentifier: emp.salaryIdentifier || '',
+                            firstName: emp.firstName,
+                            lastName: emp.lastName,
+                            departmentNames: deptNames,
+                            employeeGroupNames: grpNames,
+                            departmentIds: deptIds,
+                            employeeGroupIds: groupIds,
+                            primaryDepartmentId: emp.primaryDepartmentId,
+                            employeeTypeId: emp.employeeTypeId,
+                            selected: existing ? existing.selected : false,
+                            deactivationDate: existing ? existing.deactivationDate : '',
+                            reason: existing ? existing.reason : '',
+                            keepShifts: existing ? existing.keepShifts : false,
+                            terminationTypeId: existing ? existing.terminationTypeId : undefined,
+                            terminationTypeName: existing ? existing.terminationTypeName : undefined,
+                            status: existing ? existing.status : undefined,
+                            resultMessage: existing ? existing.resultMessage : undefined,
+                        };
+                    });
+                });
+            }
+        } catch (err: any) {
+            setErrorMessage("Failed to refresh data: " + (err.message || 'Unknown error'));
+        } finally {
+            setIsLoading(false);
+            setLoadingMessage("");
+        }
     };
 
     // Item updates from Table Editor
@@ -413,16 +550,58 @@ export const App: React.FC = () => {
         abortRef.current = true;
     };
 
-    const handleRestartAfterResults = () => {
-        // Reset selections and return to selection method
-        setDeactivationItems(prev => prev.map(item => ({
-            ...item,
-            selected: false,
-            deactivationDate: '',
-            reason: '',
-            keepShifts: false,
-        })));
-        setCurrentStepIndex(1);
+    const handleStartOver = () => {
+        // Clear all process results, progress, and execution memory
+        setResults([]);
+        setProcessingProgress({
+            current: 0,
+            total: 0,
+            currentEmployeeName: '',
+            currentEmployeeId: null,
+            successCount: 0,
+            failureCount: 0,
+        });
+
+        // Reconstruct clean initial deactivation items from portal employees
+        const deptMap = new Map<number, string>();
+        departments.forEach(d => deptMap.set(d.id, d.name));
+
+        const groupMap = new Map<number, string>();
+        employeeGroups.forEach(g => groupMap.set(g.id, g.name));
+
+        const freshItems: DeactivationItem[] = employees.map(emp => {
+            const deptIds = emp.departmentIds || [];
+            const groupIds = emp.employeeGroupIds || [];
+
+            const deptNames = deptIds
+                .map(id => deptMap.get(id))
+                .filter((n): n is string => Boolean(n));
+
+            const grpNames = groupIds
+                .map(id => groupMap.get(id))
+                .filter((n): n is string => Boolean(n));
+
+            return {
+                employeeId: emp.id,
+                salaryIdentifier: emp.salaryIdentifier || '',
+                firstName: emp.firstName,
+                lastName: emp.lastName,
+                departmentNames: deptNames,
+                employeeGroupNames: grpNames,
+                departmentIds: deptIds,
+                employeeGroupIds: groupIds,
+                primaryDepartmentId: emp.primaryDepartmentId,
+                employeeTypeId: emp.employeeTypeId,
+                selected: false,
+                deactivationDate: '',
+                reason: '',
+                keepShifts: false,
+            };
+        });
+
+        setDeactivationItems(freshItems);
+        setErrorMessage(null);
+        setCurrentStepIndex(1); // Return to Step 1: "Select Deactivation Method"
     };
 
     return (
@@ -454,21 +633,21 @@ export const App: React.FC = () => {
                     </div>
 
                     <div className="flex items-center gap-3">
-                        {portalInfo && (
+                        {portalName && (
                             <div className="hidden sm:flex items-center gap-2 bg-gray-50 border border-gray-200 px-3 py-1.5 rounded-xl text-xs">
                                 <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
                                 <span className="text-gray-600">Portal:</span>
-                                <strong className="text-gray-900">{portalInfo.portalName || portalInfo.name || 'Connected'}</strong>
+                                <strong className="text-gray-900">{portalName}</strong>
                             </div>
                         )}
 
                         {credentials && (
                             <button
                                 type="button"
-                                onClick={handleDisconnect}
+                                onClick={handleChangeCredentials}
                                 className="text-xs font-semibold text-gray-600 hover:text-red-600 hover:bg-red-50 border border-gray-200 hover:border-red-200 px-3 py-1.5 rounded-xl transition-all cursor-pointer"
                             >
-                                Disconnect
+                                Change credentials (log out)
                             </button>
                         )}
                     </div>
@@ -486,12 +665,63 @@ export const App: React.FC = () => {
                         current={currentStepIndex}
                         steps={STEP_CONFIG}
                         onStepClick={(index) => {
+                            if (index === 0 && currentStepIndex !== 0) {
+                                handleChangeCredentials();
+                                return;
+                            }
                             // Only allow navigating backwards or between configured steps when authenticated
                             if (credentials && index < currentStepIndex && currentStepIndex !== 4) {
                                 setCurrentStepIndex(index);
                             }
                         }}
                     />
+
+                    {/* Step 5: Header Status Bar UI Component */}
+                    {currentStepIndex !== 0 && (
+                        <div className="flex justify-center mt-6 text-sm items-center">
+                            {/* Refresh / Re-sync button */}
+                            {currentStepIndex !== 4 && currentStepIndex !== 5 && (
+                                <button
+                                    type="button"
+                                    onClick={handleManualRefresh}
+                                    className="mr-2 text-gray-500 hover:text-blue-600 transition-colors p-1 rounded focus:outline-none cursor-pointer disabled:opacity-50"
+                                    title="Refresh portal data and fields"
+                                    disabled={isLoading}
+                                >
+                                    <svg
+                                        className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`}
+                                        fill="none"
+                                        viewBox="0 0 24 24"
+                                        stroke="currentColor"
+                                    >
+                                        <path
+                                            strokeLinecap="round"
+                                            strokeLinejoin="round"
+                                            strokeWidth="2"
+                                            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                                        />
+                                    </svg>
+                                </button>
+                            )}
+
+                            {/* Portal Name Status */}
+                            <span className="text-gray-600">
+                                Logged in: <strong>{portalName || 'Loading...'}</strong>
+                            </span>
+
+                            {/* Separator */}
+                            <span className="text-gray-400 mx-2">|</span>
+
+                            {/* Log out / Change Credentials button */}
+                            <button
+                                type="button"
+                                onClick={handleChangeCredentials}
+                                className="text-gray-600 hover:text-red-700 underline transition-colors cursor-pointer"
+                            >
+                                Change credentials (log out)
+                            </button>
+                        </div>
+                    )}
                 </div>
 
                 {/* Error Banner */}
@@ -532,7 +762,7 @@ export const App: React.FC = () => {
                             method={method}
                             setMethod={setMethod}
                             onContinue={() => setCurrentStepIndex(2)}
-                            onBack={() => setCurrentStepIndex(0)}
+                            onBack={handleChangeCredentials}
                             totalEmployeesCount={deactivationItems.length}
                             terminationTypes={terminationTypes}
                         />
@@ -622,7 +852,8 @@ export const App: React.FC = () => {
                                 })));
                                 setCurrentStepIndex(method === 'excel' ? 3 : 2);
                             }}
-                            onRestart={handleRestartAfterResults}
+                            onStartOver={handleStartOver}
+                            onRestart={handleStartOver}
                         />
                     )}
                 </div>

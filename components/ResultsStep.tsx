@@ -8,7 +8,8 @@ interface ResultsStepProps {
     onBack1Step: () => void;
     onBackToEditor: () => void;
     onFixErrors: () => void;
-    onRestart: () => void;
+    onRestart?: () => void;
+    onStartOver?: () => void;
 }
 
 export const ResultsStep: React.FC<ResultsStepProps> = ({
@@ -16,7 +17,8 @@ export const ResultsStep: React.FC<ResultsStepProps> = ({
     onBack1Step,
     onBackToEditor,
     onFixErrors,
-    onRestart
+    onRestart,
+    onStartOver
 }) => {
     const [filterStatus, setFilterStatus] = useState<'all' | 'success' | 'error'>('all');
 
@@ -145,11 +147,12 @@ export const ResultsStep: React.FC<ResultsStepProps> = ({
 
                         <button
                             type="button"
-                            onClick={onRestart}
-                            className="bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold px-3.5 py-2 rounded-xl text-xs sm:text-sm transition-colors cursor-pointer"
-                            title="Reset selections and start a new batch"
+                            onClick={onStartOver || onRestart}
+                            className="bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-300 font-semibold px-4 py-2 rounded-xl text-xs sm:text-sm transition-colors shadow-2xs flex items-center gap-1.5 cursor-pointer"
+                            title="Start over: return to Select Deactivation Method with memory cleared (preserves API token)"
                         >
-                            New Batch
+                            <span>🔄</span>
+                            <span>Start over</span>
                         </button>
                     </div>
                 </div>
@@ -328,6 +331,44 @@ export const ResultsStep: React.FC<ResultsStepProps> = ({
                             )}
                         </tbody>
                     </table>
+                </div>
+            </div>
+
+            {/* Bottom Actions */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white p-4 rounded-2xl shadow-sm border border-gray-200">
+                <span className="text-xs text-gray-500">
+                    Finished processing <strong>{results.length}</strong> deactivation {results.length === 1 ? 'request' : 'requests'} ({successCount} succeeded, {failureCount} failed).
+                </span>
+
+                <div className="flex flex-wrap items-center gap-2">
+                    <button
+                        type="button"
+                        onClick={onBack1Step}
+                        className="bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 font-semibold px-3.5 py-2 rounded-xl text-xs transition-colors shadow-2xs cursor-pointer"
+                    >
+                        ← Back 1 Step
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={handleExportResultsExcel}
+                        className="bg-white border border-emerald-300 hover:bg-emerald-50 text-emerald-800 font-semibold px-3.5 py-2 rounded-xl text-xs transition-colors shadow-2xs flex items-center gap-1.5 cursor-pointer"
+                    >
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
+                        <span>Download Excel</span>
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={onStartOver || onRestart}
+                        className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-xl text-xs transition-colors shadow-sm flex items-center gap-1.5 cursor-pointer"
+                        title="Return to Select Deactivation Method with memory cleared (preserves API token)"
+                    >
+                        <span>🔄</span>
+                        <span>Start over</span>
+                    </button>
                 </div>
             </div>
         </div>
